@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.pooli.application.mapper.AppMapper">
+
+    <select id="findApps" resultType="com.pooli.application.domain.dto.response.AppResDto">
+        SELECT
+            application_id AS appId,
+            application_name AS appName,
+            category
+        FROM APPLICATION
+        <where>
+            <if test="category != null">
+                category = #{category}
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND application_name LIKE CONCAT('%', #{keyword}, '%')
+            </if>
+        </where>
+        ORDER BY application_id ASC
+    </select>
+
+</mapper>
