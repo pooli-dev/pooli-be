@@ -12,7 +12,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class Application {
 
-	Integer applicationId;
-	String applicationName;
-	ApplicationCategory category;
+	private Integer applicationId;
+	private String applicationName;
+	private ApplicationCategory category;
 }
