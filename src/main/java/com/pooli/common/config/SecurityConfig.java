@@ -48,7 +48,7 @@ public class SecurityConfig {
                     "/api/auth/user/login",
                     "/api/auth/logout",
                     "/error",
-                    "/api/shared-pools/**"
+                    "/actuator/**"
                 ).permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .anyRequest().authenticated()
