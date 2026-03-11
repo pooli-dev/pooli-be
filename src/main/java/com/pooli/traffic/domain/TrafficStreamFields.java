@@ -8,6 +8,11 @@ public final class TrafficStreamFields {
 
     public static final String PAYLOAD = "payload";
 
+    /**
+     * Prevents instantiation of this constants-only utility class.
+     *
+     * <p>The class exposes Redis Streams field name constants and is not meant to be instantiated.</p>
+     */
     private TrafficStreamFields() {
     }
 }

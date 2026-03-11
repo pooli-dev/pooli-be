@@ -23,6 +23,23 @@ import com.pooli.auth.exception.CustomAuthenticationEntryPoint;
 @Configuration
 @Profile("!traffic")
 public class SecurityConfig {
+    /**
+     * Configure and build the application's SecurityFilterChain with the project's security rules.
+     *
+     * Configures CORS, disables HTTP Basic and form login, sets session creation policy to IF_REQUIRED,
+     * installs custom authentication and access-denied handlers, permits public access to documentation,
+     * auth endpoints, traffic requests, error and actuator paths, allows all OPTIONS requests, requires
+     * authentication for other requests, and delegates CSRF customization to the provided customizer.
+     *
+     * @param http the HttpSecurity builder supplied by Spring Security
+     * @param corsConfigurationSource the CORS configuration source to apply
+     * @param csrfTokenRepository repository used to persist CSRF tokens
+     * @param csrfCustomizer component that applies additional CSRF configuration to HttpSecurity
+     * @param customAuthenticationEntryPoint handler invoked for unauthenticated requests (401)
+     * @param customAccessDeniedHandler handler invoked for access-denied events (403)
+     * @return the configured SecurityFilterChain
+     * @throws Exception if an error occurs while configuring or building the security filter chain
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(
         HttpSecurity http,

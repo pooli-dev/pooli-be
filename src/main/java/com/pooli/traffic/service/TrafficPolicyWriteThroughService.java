@@ -44,9 +44,14 @@ public class TrafficPolicyWriteThroughService {
     private final TrafficRedisRuntimePolicy trafficRedisRuntimePolicy;
 
     /**
-     * 정책 활성화 상태를 Redis policy 키에 동기화합니다.
-     * - 활성화(true): key 존재(value=1)
-     * - 비활성(false): key 삭제
+     * Synchronizes a policy's activation state to Redis.
+     *
+     * When `isActive` is true, the policy key is set to "1"; when `isActive` is false, the key is deleted.
+     * The Redis write is scheduled to run after the current transaction commits if a transaction exists,
+     * otherwise it executes immediately and will be retried on transient failures according to the service's retry policy.
+     *
+     * @param policyId the identifier of the policy to synchronize
+     * @param isActive true to mark the policy active (set key to "1"), false to mark it inactive (delete key)
      */
     public void syncPolicyActivation(long policyId, boolean isActive) {
         executeAfterCommit(
@@ -63,8 +68,15 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * line 단위 한도 정책(daily/shared)을 Redis에 즉시 반영합니다.
-     * 정책이 비활성인 경우에는 명세상 무제한(-1)로 저장해 Lua가 제한을 적용하지 않도록 맞춥니다.
+     * Synchronizes line-level daily and monthly shared limits to Redis.
+     *
+     * If a limit is not active, stores -1 to indicate "unlimited" so downstream Redis/Lua logic does not enforce a limit.
+     *
+     * @param lineId        identifier of the line whose limits are being synchronized
+     * @param dailyLimit    configured daily limit; may be null
+     * @param isDailyActive true if the daily limit should be enforced, false or null to mark as unlimited
+     * @param sharedLimit   configured monthly shared limit; may be null
+     * @param isSharedActive true if the monthly shared limit should be enforced, false or null to mark as unlimited
      */
     public void syncLineLimit(
             long lineId,
@@ -89,9 +101,11 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * 즉시 차단 종료 시각을 Redis에 동기화합니다.
-     * - null: 차단 해제 상태이므로 키 삭제
-     * - 값 존재: Asia/Seoul 기준 epoch second 문자열로 저장
+     * Synchronizes the immediate block end time for a line to Redis.
+     *
+     * @param lineId     the identifier of the line whose block end time is being synchronized
+     * @param blockEndAt the block end time to store; if `null`, the Redis key is deleted;
+     *                   otherwise the time is stored as epoch seconds in the Asia/Seoul time zone
      */
     public void syncImmediateBlockEnd(long lineId, LocalDateTime blockEndAt) {
         executeAfterCommit(
@@ -110,8 +124,14 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * 반복 차단 정책 목록을 repeat_block hash에 스냅샷 형태로 동기화합니다.
-     * 기존 hash를 먼저 비운 뒤 활성 정책만 다시 적재해 soft-delete/비활성 변경을 즉시 반영합니다.
+     * Synchronizes repeat-block policies for a line into the repeat_block Redis hash as a snapshot.
+     *
+     * Deletes the existing hash and writes the provided repeat-block entries so that removals or
+     * deactivations are reflected immediately.
+     *
+     * @param lineId       identifier of the line whose repeat-block policies are being synchronized
+     * @param repeatBlocks list of repeat-block policy DTOs to persist as the snapshot; if null or empty,
+     *                     the existing repeat_block hash will be cleared
      */
     public void syncRepeatBlock(long lineId, List<RepeatBlockPolicyResDto> repeatBlocks) {
         executeAfterCommit(
@@ -132,9 +152,18 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * 앱 정책(일 제한/속도 제한/화이트리스트)을 Redis 정책 키에 동기화합니다.
-     * isActive=false면 해당 앱의 정책 흔적을 모두 제거하고,
-     * isActive=true면 limit/speed/hash 및 whitelist set을 최신값으로 맞춥니다.
+     * Synchronizes an app's data daily limit, speed limit, and whitelist membership to Redis for a given line.
+     *
+     * If `isActive` is false, removes all stored entries for the app so no limits or whitelist membership remain.
+     * If `isActive` is true, updates the data and speed limit fields (using `-1` to represent an unset limit) and
+     * updates membership in the whitelist set according to `isWhitelist`.
+     *
+     * @param lineId      the identifier of the line whose Redis keys will be updated
+     * @param appId       the application identifier used to build hash fields and whitelist member
+     * @param isActive    when false, all Redis entries for this app are removed; when true, entries are created/updated
+     * @param dataLimit   the daily data limit to store; treated as "unset" (`-1`) if null
+     * @param speedLimit  the speed limit to store; treated as "unset" (`-1`) if null
+     * @param isWhitelist whether the app should be present in the line's whitelist set
      */
     public void syncAppPolicy(
             long lineId,
@@ -188,8 +217,12 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * 앱 정책 삭제 시 Redis의 관련 키 조각(limit/speed/whitelist)을 강제로 제거합니다.
-     * soft-delete 이후 stale 정책이 남지 않게 하는 정리용 메서드입니다.
+     * Remove all Redis entries related to an app's policy for the given line.
+     *
+     * Removes the app's field from the line's data-daily-limit and speed-limit hashes and removes the app from the line's whitelist set.
+     *
+     * @param lineId the identifier of the line whose app-related Redis entries should be removed
+     * @param appId  the application identifier whose Redis entries should be evicted
      */
     public void evictAppPolicy(long lineId, int appId) {
         executeAfterCommit(
@@ -208,8 +241,12 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * 앱 정책 스냅샷을 Redis에 일괄 반영합니다.
-     * line 단위 app 정책 키 3종을 먼저 비운 뒤, 활성 정책만 다시 적재합니다.
+     * Applies a complete snapshot of app policies for a given line to Redis by clearing related keys and reloading active policies.
+     *
+     * <p>Deletes the three per-line app policy keys (data daily limit hash, speed limit hash, whitelist set) and then writes back entries only for policies that are active and have a valid application id.</p>
+     *
+     * @param lineId the identifier of the line whose app policy snapshot will be applied
+     * @param appPolicies the list of app policies to load; null or empty list results in cleared keys with no further writes
      */
     public void syncAppPolicySnapshot(long lineId, List<AppPolicy> appPolicies) {
         executeAfterCommit(
@@ -271,11 +308,10 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * write-through 실행 타이밍을 제어합니다.
-     * - 트랜잭션 중: afterCommit 콜백으로 등록(커밋 성공 후 실행)
-     * - 트랜잭션 없음: 즉시 실행
+     * Ensures the given Redis write operation is executed only after a successful database commit when a transaction is active; otherwise executes it immediately.
      *
-     * 이렇게 분리해야 DB 롤백 시 Redis만 먼저 반영되는 정합성 깨짐을 막을 수 있습니다.
+     * @param operationName        a descriptive name for the operation used for logging and tracing
+     * @param redisWriteOperation  the Redis write logic to be executed (will be run after commit if inside a transaction)
      */
     private void executeAfterCommit(String operationName, Runnable redisWriteOperation) {
         Runnable wrappedOperation = () -> executeWithRetry(operationName, redisWriteOperation);
@@ -283,6 +319,12 @@ public class TrafficPolicyWriteThroughService {
         // 트랜잭션 내에서는 DB 커밋 성공 이후에만 Redis 반영을 수행한다.
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                /**
+                 * Executes the wrapped operation after the surrounding transaction has successfully committed.
+                 *
+                 * <p>This method is invoked by Spring's transaction synchronization to perform the
+                 * write-through Redis update once the database transaction is committed.</p>
+                 */
                 @Override
                 /**
                   * `afterCommit` 처리 목적에 맞는 핵심 로직을 수행합니다.
@@ -298,8 +340,11 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * Redis write-through를 재시도 정책과 함께 실행합니다.
-     * 최대 시도 횟수 초과 시 EXTERNAL_SYSTEM_ERROR로 전환해 상위 트랜잭션이 실패를 인지하도록 합니다.
+     * Executes a Redis write operation with retries and backoff, and fails the surrounding transaction if retries are exhausted.
+     *
+     * @param operationName a descriptive name used for logging and tracing the operation
+     * @param redisWriteOperation the Redis write action to execute
+     * @throws ApplicationException with CommonErrorCode.EXTERNAL_SYSTEM_ERROR when all retry attempts fail
      */
     private void executeWithRetry(String operationName, Runnable redisWriteOperation) {
         RuntimeException lastException = null;
@@ -335,8 +380,12 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * 재시도 간 짧은 백오프를 수행합니다.
-     * 인터럽트가 발생하면 현재 스레드 인터럽트 상태를 복구한 뒤 명시적 예외를 던집니다.
+     * Sleeps for a short backoff period used between retry attempts.
+     *
+     * If the sleep is interrupted, restores the thread's interrupt status and throws an
+     * ApplicationException with CommonErrorCode.EXTERNAL_SYSTEM_ERROR.
+     *
+     * @throws ApplicationException when the sleep is interrupted
      */
     private void sleepBackoff() {
         try {
@@ -348,9 +397,16 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * repeat block 응답 DTO 목록을 Redis hash 포맷으로 변환합니다.
-     * hash field: day:{dayNum}:{repeatBlockId}
-     * hash value: {startSec}:{endSec}
+     * Builds a Redis hash representation of active repeat block policies.
+     *
+     * <p>Each map entry's key is formatted as {@code day:{dayNum}:{repeatBlockId}} and the value as
+     * {@code {startSec}:{endSec}}, where {@code dayNum} is the day's ordinal (0–6) and {@code startSec}
+     * / {@code endSec} are seconds from midnight.</p>
+     *
+     * @param repeatBlocks list of repeat block DTOs to convert; null, inactive items, or entries with
+     *                     missing required fields are ignored
+     * @return a map ready to be written to a Redis hash, mapping field names to their corresponding
+     *         start/end second ranges; empty if there are no valid entries
      */
     private Map<String, String> buildRepeatBlockHash(List<RepeatBlockPolicyResDto> repeatBlocks) {
         Map<String, String> hashToWrite = new HashMap<>();
@@ -385,8 +441,11 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * 한도 정책의 최종 저장값을 계산합니다.
-     * 비활성 정책은 항상 -1(무제한)로 저장합니다.
+     * Determine the final stored numeric limit for a policy based on its active flag.
+     *
+     * @param limit    the configured limit value, or `null` if unspecified
+     * @param isActive `true` if the policy is active; otherwise not active
+     * @return         `-1` if the policy is not active or `limit` is `null`, otherwise the provided `limit`
      */
     private long resolveLimitValue(Long limit, Boolean isActive) {
         if (!Boolean.TRUE.equals(isActive)) {
@@ -396,14 +455,20 @@ public class TrafficPolicyWriteThroughService {
     }
 
     /**
-     * app_data_daily_limit hash의 field 이름 규칙입니다.
+     * Constructs the hash field name for an app's daily data limit.
+     *
+     * @param appId the application identifier
+     * @return the hash field name formatted as "limit:{appId}"
      */
     private String appDataLimitField(int appId) {
         return "limit:" + appId;
     }
 
     /**
-     * app_speed_limit hash의 field 이름 규칙입니다.
+     * Builds the Redis hash field name for an app's speed limit.
+     *
+     * @param appId the application identifier
+     * @return the field name formatted as "speed:{appId}"
      */
     private String appSpeedLimitField(int appId) {
         return "speed:" + appId;

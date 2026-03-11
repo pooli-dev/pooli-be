@@ -34,12 +34,27 @@ public class AdminPolicyServiceImpl implements AdminPolicyService {
     private final AlarmHistoryService alarmHistoryService;
     private final ObjectProvider<TrafficPolicyWriteThroughService> trafficPolicyWriteThroughServiceProvider;
 
+    /**
+     * Retrieve all admin policies.
+     *
+     * @return a list of AdminPolicyResDto representing all admin policies
+     */
     @Override
     @Transactional(readOnly = true)
     public List<AdminPolicyResDto> getAllPolicies() {
         return adminPolicyMapper.selectAllPolicies();
     }
 
+    /**
+     * Creates a new admin policy and returns its representation.
+     *
+     * The created policy is initially inactive; when the new policy ID is available, the method
+     * synchronizes the policy activation key to `false`. The returned DTO reflects the created
+     * policy's ID, name, category, and an `isActive` value of `false`.
+     *
+     * @param request the request DTO containing the new policy's properties (name, category, etc.)
+     * @return an AdminPolicyResDto with the created policy's ID, name, category ID, and `isActive = false`
+     */
     @Override
     public AdminPolicyResDto createPolicy(AdminPolicyReqDto request) {
         adminPolicyMapper.insertPolicy(request);
@@ -60,6 +75,14 @@ public class AdminPolicyServiceImpl implements AdminPolicyService {
                 .build();
     }
 
+    /**
+     * Updates an existing admin policy with the provided values.
+     *
+     * @param policyId the identifier of the policy to update
+     * @param request  DTO containing the updated policy fields
+     * @return         an AdminPolicyResDto containing the policy's id, name, category id, and active status
+     * @throws ApplicationException if no policy exists with the given {@code policyId}
+     */
     @Override
     public AdminPolicyResDto updatePolicy(Integer policyId, AdminPolicyReqDto request) {
 
@@ -84,6 +107,12 @@ public class AdminPolicyServiceImpl implements AdminPolicyService {
                 .build();
     }
 
+    /**
+     * Delete the admin policy identified by the given ID and propagate a deactivation to the write-through cache if available.
+     *
+     * @return an AdminPolicyResDto containing the deleted policy's ID
+     * @throws ApplicationException if no policy exists with the given ID (PolicyErrorCode.ADMIN_POLICY_NOT_FOUND)
+     */
     @Override
     public AdminPolicyResDto deletePolicy(Integer policyId) {
 
@@ -104,6 +133,14 @@ public class AdminPolicyServiceImpl implements AdminPolicyService {
                 .build();
     }
 
+    /**
+     * Updates the activation status of the specified admin policy, synchronizes the change with the write-through service if available, and sends an owner notification.
+     *
+     * @param policyId the identifier of the policy to update
+     * @param request  the requested activation state
+     * @return an AdminPolicyActiveResDto containing the policyId and the resulting isActive value
+     * @throws ApplicationException if the policy with the given id does not exist (PolicyErrorCode.ADMIN_POLICY_NOT_FOUND)
+     */
     @Override
     public AdminPolicyActiveResDto updateActivationPolicy(Integer policyId, AdminPolicyActiveReqDto request) {
 
@@ -169,6 +206,13 @@ public class AdminPolicyServiceImpl implements AdminPolicyService {
                 .build();
     }
 
+    /**
+     * Deletes the policy category with the given identifier.
+     *
+     * @param policyCategoryId the identifier of the policy category to delete
+     * @return an AdminPolicyCateResDto containing the deleted category's `policyCategoryId`
+     * @throws ApplicationException if no category exists with the provided `policyCategoryId` (PolicyErrorCode.ADMIN_POLICY_NOT_FOUND)
+     */
     @Override
     public AdminPolicyCateResDto deleteCategory(Integer policyCategoryId) {
 
@@ -188,6 +232,14 @@ public class AdminPolicyServiceImpl implements AdminPolicyService {
                 .build();
     }
 
+    /**
+     * Obtains an available TrafficPolicyWriteThroughService and, if present, invokes the provided callback with it.
+     *
+     * <p>If the ObjectProvider or the service is not available, the method returns without performing any action.</p>
+     *
+     * @param operationName a short identifier describing the write-through operation (may be unused by callers)
+     * @param callback      action to execute with the available TrafficPolicyWriteThroughService
+     */
     private void applyWriteThrough(
             String operationName,
             java.util.function.Consumer<TrafficPolicyWriteThroughService> callback
@@ -205,6 +257,17 @@ public class AdminPolicyServiceImpl implements AdminPolicyService {
         callback.accept(writeThroughService);
     }
 
+    /**
+     * Sends a policy-related notification containing the provided metadata.
+     *
+     * The notification payload will include a `type` field and, when non-null, `policyId`, `policyCategoryId`, and `name`.
+     *
+     * @param type the alarm type to include in the notification payload
+     * @param targetType the target recipient type for the notification
+     * @param policyId optional policy identifier to include in the payload
+     * @param policyCategoryId optional policy category identifier to include in the payload
+     * @param name optional policy name to include in the payload
+     */
     private void sendPolicyNotification(AlarmType type, NotificationTargetType targetType, Integer policyId, Integer policyCategoryId, String name) {
         ObjectNode value = JsonNodeFactory.instance.objectNode();
         value.put("type", type.name());

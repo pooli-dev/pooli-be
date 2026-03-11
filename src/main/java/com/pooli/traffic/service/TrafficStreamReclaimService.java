@@ -29,7 +29,11 @@ public class TrafficStreamReclaimService {
     private final AppStreamsProperties appStreamsProperties;
 
     /**
-      * `reclaimAndRouteExceededRetries` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Reclaims eligible pending Redis Stream messages and routes messages that exceeded retry limits to the dead-letter queue.
+     *
+     * Reclaimed records are returned for downstream processing; messages that exceed the configured retry limit are moved to DLQ and acknowledged so they are not reprocessed.
+     *
+     * @return a list of reclaimed stream records, or an empty list if no records were reclaimed
      */
     public List<MapRecord<String, String, String>> reclaimAndRouteExceededRetries() {
         // pending 스캔 건수는 readCount를 재사용하되, 최소 1건을 보장한다.
@@ -67,7 +71,11 @@ public class TrafficStreamReclaimService {
     }
 
     /**
-     * 현재 상태를 불리언 값으로 확인해 호출 측의 분기 판단을 돕습니다.
+     * Determines whether a pending message has been idle at least the configured reclaim threshold.
+     *
+     * @param pendingMessage the pending stream message to evaluate
+     * @param reclaimMinIdleMs minimum idle time in milliseconds required for reclaim
+     * @return true if the message's idle time is greater than or equal to {@code reclaimMinIdleMs}, false otherwise
      */
     private boolean isIdleEnoughForReclaim(PendingMessage pendingMessage, long reclaimMinIdleMs) {
         Duration elapsedSinceLastDelivery = pendingMessage.getElapsedTimeSinceLastDelivery();
@@ -76,14 +84,22 @@ public class TrafficStreamReclaimService {
     }
 
     /**
-      * `hasExceededRetryLimit` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Determine whether a pending message's delivery attempts exceed the configured retry limit.
+     *
+     * @param pendingMessage the pending stream message to evaluate
+     * @param maxRetry the maximum allowed delivery attempts
+     * @return `true` if the message's total delivery count is greater than `maxRetry`, `false` otherwise
      */
     private boolean hasExceededRetryLimit(PendingMessage pendingMessage, int maxRetry) {
         return pendingMessage.getTotalDeliveryCount() > maxRetry;
     }
 
     /**
-      * `moveToDlqAndAcknowledge` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Moves a pending message to the dead-letter queue with a reason that includes its delivery count,
+     * then acknowledges the original pending entry to prevent message loss.
+     *
+     * @param pendingMessage the pending stream entry to move and acknowledge
+     * @param maxRetry the configured maximum retry count used in the DLQ reason message
      */
     private void moveToDlqAndAcknowledge(PendingMessage pendingMessage, int maxRetry) {
         String sourceRecordId = pendingMessage.getIdAsString();

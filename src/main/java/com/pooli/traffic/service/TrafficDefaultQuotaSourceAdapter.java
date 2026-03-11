@@ -27,18 +27,16 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     private final TrafficRecentUsageBucketService trafficRecentUsageBucketService;
 
     /**
-     * HYDRATE 단계에서 Redis 잔량 키를 복구할 때 사용할 "초기 잔량"을 DB에서 조회합니다.
-     *
-     * <p>동작 원칙:
-     * 1) poolType(개인/공유)에 따라 조회 대상 테이블이 달라집니다.
-     * 2) payload 식별자(lineId/familyId)가 없으면 0으로 보정됩니다.
-     * 3) 음수/NULL 값은 비정상 데이터로 간주하고 0으로 정규화합니다.
-     *
-     * @param poolType    조회할 풀 유형(INDIVIDUAL, SHARED)
-     * @param payload     요청 컨텍스트(traceId/lineId/familyId 포함)
-     * @param targetMonth 월 기준 파라미터(현재 구현에서는 payload 식별자 기반 조회에 사용)
-     * @return Redis hydrate에 사용할 초기 잔량(Byte, 0 이상)
-     */
+         * Load the initial remaining quota from the database to initialize Redis during hydrate.
+         *
+         * <p>If the payload lacks identifiers or the stored value is null/negative, the returned value
+         * is normalized to zero.
+         *
+         * @param poolType   the quota pool type (INDIVIDUAL or SHARED)
+         * @param payload    request context containing identifiers such as lineId or familyId
+         * @param targetMonth month context for the lookup
+         * @return the initial remaining amount to use for Redis hydration, normalized to zero or greater
+         */
     @Override
     public long loadInitialAmount(TrafficPoolType poolType, TrafficPayloadReqDto payload, YearMonth targetMonth) {
         // hydrate 시점의 원천 잔량을 DB에서 읽어 Redis 초기값으로 사용한다.
@@ -46,15 +44,11 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     }
 
     /**
-     * 리필 계획(delta, bucketCount, refillUnit, threshold)을 계산해 반환합니다.
+     * Computes the refill plan (delta, bucket count, refill unit, and threshold) for the specified traffic pool and request context.
      *
-     * <p>이 메서드는 DB 계산을 직접 수행하지 않고, 최근 사용량 버킷 집계 서비스에 위임합니다.
-     * 즉, "최근 10초 평균 -> fallback -> unit/threshold 계산" 규칙은
-     * {@link TrafficRecentUsageBucketService}가 책임집니다.
-     *
-     * @param poolType 계산 대상 풀 유형
-     * @param payload  요청 컨텍스트
-     * @return 리필 의사결정에 필요한 계산 결과 묶음
+     * @param poolType the traffic pool type to compute the plan for
+     * @param payload  the request context containing identifiers and usage parameters; may be null
+     * @return a TrafficRefillPlan containing delta, bucketCount, refillUnit, and threshold values
      */
     @Override
     public TrafficRefillPlan resolveRefillPlan(TrafficPoolType poolType, TrafficPayloadReqDto payload) {
@@ -62,21 +56,18 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     }
 
     /**
-     * DB 원천 잔량에서 실제 리필 가능량을 "원자적으로" 확보(차감)하고 결과를 반환합니다.
+     * Atomically claim (deduct) an available refill amount from the database and return the before/after state.
      *
-     * <p>핵심 계약:
-     * 1) 요청 리필량(requested)을 0 이상으로 보정합니다.
-     * 2) `SELECT ... FOR UPDATE`로 현재 잔량을 잠금 조회합니다.
-     * 3) 실제 차감량은 `actual = min(requested, dbRemainingBefore)` 입니다.
-     * 4) 업데이트 성공 시 DB after 값을 계산해 반환합니다.
-     * 5) 업데이트 실패(경합/행 부재 등) 시 잔량을 재조회해 보수적으로 반환합니다.
-     * 6) 어떤 경우에도 음수 차감은 허용하지 않습니다.
+     * <p>The method normalizes a negative request to zero, locks the relevant DB row to determine the available
+     * amount, computes the actual deduction as the smaller of the request and the available amount, attempts the
+     * update, and on update failure re-reads the remaining amount to return a conservative result.
      *
-     * @param poolType             차감 대상 풀 유형
-     * @param payload              요청 컨텍스트(lineId/familyId 포함)
-     * @param targetMonth          월 기준 파라미터(조회 키 정합성 유지용)
-     * @param requestedRefillAmount 요청 리필량(Byte)
-     * @return DB 차감 전/후와 실제 차감량을 담은 결과 객체
+     * @param poolType              the traffic pool type to target (e.g., INDIVIDUAL or SHARED)
+     * @param payload               request context containing identifiers such as lineId or familyId
+     * @param targetMonth           month context used for query key consistency
+     * @param requestedRefillAmount the requested refill amount (will be normalized to zero if negative)
+     * @return a TrafficDbRefillClaimResult containing the requested amount, DB remaining before the claim,
+     *         the actual amount deducted, and the DB remaining after the claim
      */
     @Override
     @Transactional
@@ -104,13 +95,13 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     }
 
     /**
-     * DB 리필 차감 결과를 도메인 결과 객체로 일관되게 조립합니다.
+     * Assembles a TrafficDbRefillClaimResult summarizing a database refill deduction.
      *
-     * @param requestedRefillAmount 호출자가 요청한 리필량
-     * @param dbRemainingBefore      차감 전 DB 잔량
-     * @param actualRefillAmount     실제 차감된 리필량
-     * @param dbRemainingAfter       차감 후 DB 잔량
-     * @return 표준화된 리필 차감 결과 객체
+     * @param requestedRefillAmount the refill amount requested by the caller
+     * @param dbRemainingBefore     the remaining amount recorded in the database before deduction
+     * @param actualRefillAmount    the amount actually deducted from the database
+     * @param dbRemainingAfter      the remaining amount recorded in the database after deduction
+     * @return a TrafficDbRefillClaimResult containing the requested amount, before/after DB remaining amounts, and the actual deducted amount
      */
     private TrafficDbRefillClaimResult buildClaimResult(
             long requestedRefillAmount,
@@ -127,19 +118,26 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     }
 
     /**
-     * 일반 조회(잠금 없음)로 현재 DB 잔량을 읽고 0 이상으로 보정합니다.
+     * Read the current remaining amount from the database without acquiring a lock and normalize it to be zero or greater.
      *
-     * <p>조회 결과가 NULL/음수면 0으로 정규화해 상위 레이어가 안전하게 분기할 수 있게 합니다.
+     * @param poolType the traffic pool type (e.g., INDIVIDUAL or SHARED) to determine which remaining amount to read
+     * @param payload  the request payload containing identifiers (such as lineId or familyId) used to locate the record
+     * @return the remaining amount from the database; if the stored value is null or negative, returns 0
      */
     private long readRemainingAmount(TrafficPoolType poolType, TrafficPayloadReqDto payload) {
         return normalizePositive(readRemainingAmountRaw(poolType, payload));
     }
 
     /**
-     * 리필 차감 트랜잭션에서 사용할 잠금 조회(`FOR UPDATE`)를 수행합니다.
+     * Perform a locked read (FOR UPDATE) of the current remaining amount for use within a refill transaction.
      *
-     * <p>payload 또는 식별자(lineId/familyId)가 없으면 조회하지 않고 NULL을 반환합니다.
-     * NULL 반환은 상위에서 0으로 보정되어 "차감 불가"로 처리됩니다.
+     * If `payload` is null or the required identifier (lineId for INDIVIDUAL, familyId for SHARED) is missing,
+     * the method returns `null` to indicate there is no actionable record to deduct from; callers typically treat
+     * `null` as zero available amount.
+     *
+     * @param poolType the traffic pool type (INDIVIDUAL or SHARED) determining which identifier to use
+     * @param payload  the request payload containing identifying information (may be null)
+     * @return the remaining amount locked for update, or `null` if the payload or required identifier is absent
      */
     private Long readRemainingAmountForUpdate(TrafficPoolType poolType, TrafficPayloadReqDto payload) {
         if (payload == null) {
@@ -157,9 +155,13 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     }
 
     /**
-     * 일반 조회(잠금 없음)로 현재 DB 잔량 원시값을 읽습니다.
+     * Read the raw remaining amount from the database for the given pool and payload without acquiring a lock.
      *
-     * <p>이 메서드는 정규화(0 보정)를 하지 않으며, 호출 측에서 정규화를 적용합니다.
+     * <p>The returned value is the raw DB value and is not normalized (may be null or negative); callers must handle normalization and missing identifiers.
+     *
+     * @param poolType the traffic pool type (INDIVIDUAL or SHARED)
+     * @param payload  the request payload containing identifiers used to look up the remaining amount
+     * @return the raw remaining amount from the database for the specified pool and payload, or `null` if the payload or required identifier is missing
      */
     private Long readRemainingAmountRaw(TrafficPoolType poolType, TrafficPayloadReqDto payload) {
         if (payload == null) {
@@ -177,13 +179,15 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     }
 
     /**
-     * DB 잔량 차감 업데이트를 실행합니다.
+     * Execute a database update to deduct remaining quota.
      *
-     * <p>방어 규칙:
-     * 1) 차감량이 0 이하이거나 payload가 없으면 업데이트를 수행하지 않습니다.
-     * 2) poolType에 맞는 식별자(lineId/familyId)가 없으면 업데이트를 수행하지 않습니다.
+     * If the deduction cannot be applied (deductAmount <= 0, payload is null, or the poolType-specific identifier
+     * is missing), no update is performed and the method returns 0.
      *
-     * @return 업데이트된 행 수(0이면 차감 미적용)
+     * @param poolType the traffic pool type determining which identifier to use (INDIVIDUAL uses lineId, SHARED uses familyId)
+     * @param payload  the request payload containing identifiers; may be null
+     * @param deductAmount the amount to deduct from the remaining quota
+     * @return the number of rows updated in the database (0 indicates no deduction was applied)
      */
     private int deductRemainingAmount(TrafficPoolType poolType, TrafficPayloadReqDto payload, long deductAmount) {
         if (deductAmount <= 0 || payload == null) {
@@ -201,9 +205,12 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
     }
 
     /**
-     * DB 원시값을 "0 이상" 규칙으로 정규화합니다.
+     * Normalize a database-derived value to be zero or positive.
      *
-     * <p>NULL/0/음수는 모두 0으로 보정해 상위 로직에서 음수 잔량이 전파되지 않게 합니다.
+     * <p>If the input is null, zero, or negative, returns 0 to prevent negative remaining amounts from propagating.
+     *
+     * @param value a possibly-null value read from the database
+     * @return the original value when greater than zero, otherwise 0
      */
     private long normalizePositive(Long value) {
         if (value == null || value <= 0) {

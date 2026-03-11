@@ -1,12 +1,18 @@
 -- deduct_shared_tick.lua
 -- 반환 형식: {"answer":number,"status":"..."} JSON 문자열
 -- 정책 적용 순서(공유풀):
--- whitelist -> immediate -> repeat -> daily -> monthly_shared -> app_daily -> app_speed
+-- Encode the given result into a JSON string with `answer` and `status` fields.
+-- @param answer number The numeric deduction amount or result code.
+-- @param status string A short status identifier describing the outcome.
+-- @return string JSON string containing `answer` (number) and `status` (string).
 
 local function as_json(answer, status)
   return cjson.encode({ answer = answer, status = status })
 end
 
+-- Determine whether a policy key refers to an enabled policy present in Redis.
+-- @param policy_key The Redis key name for the policy; if `nil` or empty it is treated as disabled.
+-- @return `true` if the key is non-empty and exists in Redis, `false` otherwise.
 local function is_policy_enabled(policy_key)
   if not policy_key or policy_key == "" then
     return false
@@ -14,6 +20,11 @@ local function is_policy_enabled(policy_key)
   return redis.call("EXISTS", policy_key) == 1
 end
 
+-- Determines whether a given second-of-day falls within any repeat-block ranges for a specific day stored under a Redis hash key.
+-- @param repeat_block_key Redis hash key containing daily range entries (fields expected to follow "day:<day_num>:*").
+-- @param day_num Day index (0-6) to match against stored ranges.
+-- @param sec_of_day Seconds since midnight to test (0-86399).
+-- @return `true` if a matching range exists for the given day and second, `false` otherwise. An empty or non-existent key yields `false`.
 local function is_in_repeat_block(repeat_block_key, day_num, sec_of_day)
   if not repeat_block_key or repeat_block_key == "" then
     return false

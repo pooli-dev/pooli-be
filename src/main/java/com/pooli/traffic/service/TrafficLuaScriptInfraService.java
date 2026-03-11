@@ -57,6 +57,15 @@ public class TrafficLuaScriptInfraService {
     private final Map<TrafficLuaScriptType, RedisScript<Long>> longScriptRegistry =
             new EnumMap<>(TrafficLuaScriptType.class);
 
+    /**
+     * Preloads all configured Lua scripts: loads script text, registers RedisScript instances,
+     * and loads each script into Redis to store its SHA for subsequent EVALSHA execution.
+     *
+     * <p>This runs at startup to minimize first-call latency by ensuring scripts are cached
+     * both in the JVM and in Redis.</p>
+     *
+     * @throws ApplicationException if loading, registering, or preloading any script fails
+     */
     @PostConstruct
     /**
       * `preloadScripts` 처리 목적에 맞는 핵심 로직을 수행합니다.
@@ -74,8 +83,13 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 개인풀 차감 Lua를 실행합니다.
-     * keys/args 구성은 호출자(TrafficHydrateRefillAdapterService)가 명세 순서대로 전달합니다.
+     * Execute the individual-pool deduction Lua script.
+     *
+     * The caller must supply `keys` and `args` in the specific order expected by the script.
+     *
+     * @param keys the Redis KEYS array for the script, in the order defined by the caller
+     * @param args the script ARGV array, in the order defined by the caller
+     * @return a TrafficLuaExecutionResult containing the script's parsed answer and status
      */
     public TrafficLuaExecutionResult executeDeductIndivTick(List<String> keys, List<String> args) {
         String rawJson = executeStringSingle(TrafficLuaScriptType.DEDUCT_INDIV_TICK, keys, args);
@@ -83,8 +97,11 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 공유풀 차감 Lua를 실행합니다.
-     * keys/args 구성은 호출자(TrafficHydrateRefillAdapterService)가 명세 순서대로 전달합니다.
+     * Execute the shared-pool deduction Lua script and return its parsed result.
+     *
+     * @param keys redis KEYS for the script, provided in the order required by the script
+     * @param args redis ARGV values for the script, provided in the order required by the script
+     * @return the script execution result parsed into a TrafficLuaExecutionResult (contains the answer and status)
      */
     public TrafficLuaExecutionResult executeDeductSharedTick(List<String> keys, List<String> args) {
         String rawJson = executeStringSingle(TrafficLuaScriptType.DEDUCT_SHARED_TICK, keys, args);
@@ -92,7 +109,15 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 핵심 처리 로직을 실행하고 결과를 반환합니다.
+     * Determine the refill gate status for a lock based on current amount and threshold.
+     *
+     * @param lockKey      the Redis key identifying the lock
+     * @param traceId      tracing identifier passed to the Lua script for observability
+     * @param lockTtlMs    lock time-to-live in milliseconds used by the script
+     * @param currentAmount current token/amount observed when evaluating the gate
+     * @param threshold    threshold value that determines refill behavior
+     * @return             the refill gate status (`TrafficRefillGateStatus`) such as FAIL, SKIP, OK, or WAIT
+     * @throws ApplicationException if the script returns an unrecognized status or script execution fails
      */
     public TrafficRefillGateStatus executeRefillGate(
             String lockKey,
@@ -124,7 +149,12 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 핵심 처리 로직을 실행하고 결과를 반환합니다.
+     * Send a heartbeat to the lock Lua script and indicate whether the heartbeat succeeded.
+     *
+     * @param lockKey   the Redis key identifying the lock
+     * @param traceId   a trace identifier forwarded to the script for logging/tracing
+     * @param lockTtlMs the lock time-to-live in milliseconds to refresh
+     * @return          `true` if the script returned `1` indicating success, `false` otherwise
      */
     public boolean executeLockHeartbeat(String lockKey, String traceId, long lockTtlMs) {
         // lock heartbeat는 1/0을 반환하므로 1이면 성공(true)으로 변환한다.
@@ -138,7 +168,11 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 핵심 처리 로직을 실행하고 결과를 반환합니다.
+     * Attempt to release a distributed lock and indicate whether the release succeeded.
+     *
+     * @param lockKey the Redis key identifying the lock
+     * @param traceId identifier used for tracing/log correlation passed to the script
+     * @return `true` if the lock was released (script returned 1), `false` otherwise
      */
     public boolean executeLockRelease(String lockKey, String traceId) {
         // lock release 역시 1/0 계약이므로 1이면 실제 해제 성공으로 판단한다.
@@ -152,7 +186,10 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 현재 설정/상태 값을 반환합니다.
+     * Retrieve the preloaded SHA1 fingerprint associated with the given Lua script type.
+     *
+     * @param scriptType the Lua script type to look up
+     * @return the SHA1 string for the script if preloaded, or {@code null} if not present
      */
     public String getPreloadedSha(TrafficLuaScriptType scriptType) {
         // 운영 점검/로그 목적의 조회 메서드다.
@@ -160,7 +197,13 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 핵심 처리 로직을 실행하고 결과를 반환합니다.
+     * Execute the given Lua script (expected to produce a single string) and return its result.
+     *
+     * @param scriptType the type of Lua script to execute
+     * @param keys       Redis keys to pass to the script
+     * @param args       arguments to pass to the script
+     * @return           the string result produced by the script
+     * @throws ApplicationException if the script returns a null/empty result or if execution fails due to an external/Redis error
      */
     private String executeStringSingle(TrafficLuaScriptType scriptType, List<String> keys, List<String> args) {
         RedisScript<String> script = requireStringScript(scriptType);
@@ -180,7 +223,13 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 핵심 처리 로직을 실행하고 결과를 반환합니다.
+     * Execute a registered Lua script that returns a single numeric result.
+     *
+     * @param scriptType the type of Lua script to execute
+     * @param keys       the Redis keys to pass to the script
+     * @param args       the script arguments
+     * @return           the numeric result returned by the script (typically 1 or 0 for boolean-like outcomes)
+     * @throws ApplicationException if the script result is null or if execution fails due to Redis/data-access errors
      */
     private Long executeLongSingle(TrafficLuaScriptType scriptType, List<String> keys, List<String> args) {
         RedisScript<Long> script = requireLongScript(scriptType);
@@ -200,8 +249,13 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 원시 입력을 검증하고 내부 표현으로 변환합니다.
-     */
+         * Validate and convert raw Lua deduction JSON into a TrafficLuaExecutionResult.
+         *
+         * @param rawJson    the raw JSON string produced by the Lua script
+         * @param scriptType the script type (used in error messages for context)
+         * @return           a TrafficLuaExecutionResult containing the parsed `answer` and `status`
+         * @throws ApplicationException if `rawJson` is null or blank, if JSON parsing fails, or if the parsed `status` is null
+         */
     private TrafficLuaExecutionResult parseDeductResult(String rawJson, TrafficLuaScriptType scriptType) {
         // 반환값이 비어 있으면 차감 결과를 신뢰할 수 없으므로 즉시 실패 처리한다.
         if (rawJson == null || rawJson.isBlank()) {
@@ -234,7 +288,11 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-      * `requireStringScript` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Retrieve the registered Redis script (returning a `String`) for the specified Lua script type.
+     *
+     * @param scriptType the Lua script type to retrieve
+     * @return the registered {@code RedisScript<String>} for the given script type
+     * @throws ApplicationException if no script is registered for the provided script type
      */
     private RedisScript<String> requireStringScript(TrafficLuaScriptType scriptType) {
         RedisScript<String> script = stringScriptRegistry.get(scriptType);
@@ -248,7 +306,11 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-      * `requireLongScript` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Retrieve the registered Redis script that returns a `Long` for the given traffic Lua script type.
+     *
+     * @param scriptType the TrafficLuaScriptType to lookup
+     * @return the registered RedisScript<Long> for the provided script type
+     * @throws ApplicationException if no script is registered for the provided script type
      */
     private RedisScript<Long> requireLongScript(TrafficLuaScriptType scriptType) {
         RedisScript<Long> script = longScriptRegistry.get(scriptType);
@@ -262,7 +324,11 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-      * `registerScript` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Register a Lua script into the appropriate registry so it can be executed with the correct return type.
+     *
+     * @param scriptType the enum value identifying which Lua script is being registered; determines whether the script
+     *                   is stored as a string-returning or long-returning RedisScript
+     * @param scriptText the Lua source code to register
      */
     private void registerScript(TrafficLuaScriptType scriptType, String scriptText) {
         // 스크립트 반환 계약에 따라 결과 타입을 분리 등록한다.
@@ -289,7 +355,12 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-      * `preloadScriptSha` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Preloads the given Lua script into Redis, stores its SHA1 in the registry, and returns the SHA1.
+     *
+     * @param scriptType the enum value identifying the script and the registry key to store the SHA
+     * @param scriptText the Lua script source to load into Redis
+     * @return the SHA1 string returned by Redis for the loaded script
+     * @throws ApplicationException if Redis returns an empty SHA or a data access error occurs during preload
      */
     private String preloadScriptSha(TrafficLuaScriptType scriptType, String scriptText) {
         try {
@@ -315,7 +386,11 @@ public class TrafficLuaScriptInfraService {
     }
 
     /**
-     * 필요한 원천 데이터를 로드해 반환합니다.
+     * Load and return the Lua script source text for the given script type.
+     *
+     * @param scriptType identifies which Lua script resource to load
+     * @return the UTF-8 text contents of the Lua script resource
+     * @throws ApplicationException if the script resource cannot be read
      */
     private String loadScriptText(TrafficLuaScriptType scriptType) {
         ClassPathResource resource = new ClassPathResource(scriptType.getResourcePath());

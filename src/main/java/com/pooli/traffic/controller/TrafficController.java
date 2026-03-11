@@ -32,6 +32,12 @@ public class TrafficController {
 
     private final TrafficRequestEnqueueService trafficRequestEnqueueService;
 
+    /**
+     * Enqueues a traffic generation request into Redis Streams and returns the generated trace identifier.
+     *
+     * @param request the traffic generation request payload containing parameters for the traffic to produce
+     * @return the response DTO containing the generated `traceId`
+     */
     @Operation(
             summary = "트래픽 발생 요청 적재",
             description = "요청 정보를 Redis Streams에 적재하고 traceId를 반환합니다."

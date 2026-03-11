@@ -57,6 +57,12 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
     // pending reclaim 주기 실행기
     private ScheduledExecutorService reclaimExecutor;
 
+    /**
+     * Initialize and start the traffic stream consumer when consumption is enabled.
+     *
+     * Ensures the consumer group exists, creates the poller and worker executors, sets the running flag,
+     * submits the blocking consume loop, starts the reclaim loop, and logs startup details.
+     */
     @Override
     /**
      * 애플리케이션 시작 시점에 필요한 초기화 작업을 수행합니다.
@@ -104,6 +110,12 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
         );
     }
 
+    /**
+     * Stops the consumer, signals shutdown, and terminates the poller, worker, and reclaim executors.
+     *
+     * <p>Sets the running flag to false and shuts down active executors to interrupt blocking reads
+     * and halt in-progress or queued tasks.</p>
+     */
     @Override
     /**
      * 애플리케이션 종료 시점에 실행 중인 리소스를 안전하게 정리합니다.
@@ -129,6 +141,11 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
         log.info("traffic_stream_consumer_stopped");
     }
 
+    /**
+     * Indicates whether the consumer runner is currently running.
+     *
+     * @return true if the runner is running, false otherwise.
+     */
     @Override
     /**
      * 현재 상태를 불리언 값으로 확인해 호출 측의 분기 판단을 돕습니다.
@@ -137,6 +154,11 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
         return running.get();
     }
 
+    /**
+     * Indicates that this lifecycle component should start automatically.
+     *
+     * @return true if the component should start automatically, false otherwise.
+     */
     @Override
     /**
      * 현재 상태를 불리언 값으로 확인해 호출 측의 분기 판단을 돕습니다.
@@ -145,6 +167,11 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
         return true;
     }
 
+    /**
+     * Defines the lifecycle phase used to order startup and shutdown of this component.
+     *
+     * @return the phase value; Integer.MAX_VALUE so the component starts last and stops first
+     */
     @Override
     /**
      * 현재 설정/상태 값을 반환합니다.
@@ -154,7 +181,11 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
     }
 
     /**
-      * `consumeLoop` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Continuously performs blocking reads from the traffic stream and dispatches received records to the worker pool.
+     *
+     * The loop runs while the internal running flag is true; on each cycle it performs a blocking read and submits
+     * any retrieved records for parallel processing. Exceptions are logged and the loop continues, except when the
+     * runner is stopping in which case the loop exits quietly.
      */
     private void consumeLoop() {
         // SmartLifecycle stop() 호출 전까지 BLOCK read -> 레코드 처리 과정을 반복한다.
@@ -201,7 +232,10 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
     }
 
     /**
-      * 컴포넌트 실행을 시작하고 필요한 초기화를 수행합니다.
+     * Starts a single-threaded scheduled loop that periodically invokes {@code runReclaimCycle()}.
+     *
+     * The loop interval is taken from {@code appStreamsProperties.getReclaimIntervalMs()} with a minimum
+     * of 1 millisecond and is scheduled with a fixed delay between executions.
      */
     private void startReclaimLoop() {
         long reclaimIntervalMs = Math.max(1L, appStreamsProperties.getReclaimIntervalMs());
@@ -222,7 +256,11 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
     }
 
     /**
-      * `runReclaimCycle` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Runs a single reclaim cycle that requeues reclaimed records for processing.
+     *
+     * <p>Invokes the reclaim service to obtain records eligible for reprocessing (e.g., exceeded retries)
+     * and dispatches each reclaimed record to the worker queue. Any exception is logged and suppressed
+     * so the main consumer loop is not interrupted.</p>
      */
     private void runReclaimCycle() {
         if (!running.get()) {
@@ -245,7 +283,15 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
     }
 
     /**
-      * 입력 상태를 해석해 분기별 처리 로직을 수행합니다.
+     * Process a Redis stream record: validate payload and traceId, perform idempotency and in‑flight deduplication,
+     * run the deduction orchestration, persist a DONE marker, acknowledge the record, or route invalid payloads to DLQ.
+     *
+     * <p>The method will write unrecoverable messages (missing/invalid payload or missing traceId) to the DLQ and acknowledge them.
+     * If a record is already completed or cannot be claimed for in‑flight processing, it will be acknowledged or skipped as appropriate.
+     * On successful orchestration the DONE state is persisted before acknowledging and releasing the in‑flight claim.
+     * Deserialization errors are sent to DLQ and acknowledged; other runtime exceptions are logged and left unacknowledged for retry/reclaim.
+     *
+     * @param record the Redis stream record to process
      */
     private void handleRecord(MapRecord<String, String, String> record) {
         // DLQ/로그 추적을 위해 레코드 ID를 초기에 추출해 둔다.
@@ -337,7 +383,9 @@ public class TrafficStreamConsumerRunner implements SmartLifecycle {
     }
 
     /**
-     * 입력값과 정책을 바탕으로 최종 사용 값을 계산해 반환합니다.
+     * Determine the number of worker threads to use based on configuration.
+     *
+     * @return the configured worker thread count when greater than zero; otherwise 1
      */
     private int resolveWorkerThreadCount() {
         int configuredCount = appStreamsProperties.getWorkerThreadCount();

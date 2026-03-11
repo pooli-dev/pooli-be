@@ -76,6 +76,11 @@ public class UserPolicyServiceImpl implements UserPolicyService {
     private final ImmediateBlockMapper immediateBlockMapper;
     private final ObjectProvider<TrafficPolicyWriteThroughService> trafficPolicyWriteThroughServiceProvider;
 
+    /**
+     * Fetches the list of currently active policies.
+     *
+     * @return a list of ActivePolicyResDto representing active policies; an empty list if no active policies exist
+     */
     @Override
     public List<ActivePolicyResDto> getActivePolicies() {
 
@@ -89,6 +94,19 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         return repeatBlockMapper.selectRepeatBlocksByLineId(lineId);
     }
 
+    /**
+     * Create a new repeat-block policy for a line and return the created policy.
+     *
+     * <p>If request.lineId is null, the caller's lineId from {@code auth} is used. The method
+     * validates family-group ownership, rejects duplicate repeat-block periods for the same line,
+     * persists the repeat block and its days, synchronizes the updated repeat-block list to the
+     * write-through store, and emits a creation alarm.</p>
+     *
+     * @param request DTO containing repeat-block fields (lineId optional) and an optional list of day/time rules
+     * @param auth    caller identity used to derive default lineId and to authorize the operation
+     * @return the created RepeatBlockPolicyResDto containing the new repeatBlockId, lineId, active flag, and day entries
+     * @throws ApplicationException if a duplicate repeat-block period exists for the line (PolicyErrorCode.BLOCK_POLICY_CONFLICT)
+     */
     @Override
     @Transactional
     public RepeatBlockPolicyResDto createRepeatBlockPolicy(RepeatBlockPolicyReqDto request, AuthUserDetails auth) {
@@ -169,6 +187,14 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         return updated;
     }
 
+    /**
+     * Deletes the repeat block policy identified by {@code repeatBlockId} and updates external stores and alarms accordingly.
+     *
+     * @param repeatBlockId the identifier of the repeat block policy to delete
+     * @param auth the authenticated user performing the deletion
+     * @throws ApplicationException if the repeat block is not found (PolicyErrorCode.REPEAT_BLOCK_NOT_FOUND) or the user is not authorized for the line
+     * @return a {@code RepeatBlockPolicyResDto} representing the deleted block with {@code isActive} set to {@code false}
+     */
     @Override
     public RepeatBlockPolicyResDto deleteRepeatBlockPolicy(Long repeatBlockId, AuthUserDetails auth) {
 
@@ -315,6 +341,14 @@ public class UserPolicyServiceImpl implements UserPolicyService {
 
     }
 
+    /**
+     * Update the immediate block end time for the specified line, enforcing family-group ownership.
+     *
+     * @param lineId the identifier of the line whose immediate block is being updated
+     * @param request contains the new block end timestamp to apply (request.getBlockEndAt())
+     * @param auth    caller's authentication details used to verify access within the same family group
+     * @return an ImmediateBlockResDto containing the lineId and the updated blockEndAt
+     */
     @Override
     public ImmediateBlockResDto updateImmediateBlockPolicy(Long lineId, ImmediateBlockReqDto request,
             AuthUserDetails auth) {
@@ -337,6 +371,15 @@ public class UserPolicyServiceImpl implements UserPolicyService {
 
     }
 
+    /**
+     * Retrieves the limit policy for the given line and returns its current limit values.
+     *
+     * Validates that the requester belongs to the same family group as the target line. If a LineLimit record exists, the returned DTO contains the persisted limit fields and active flags; if no record exists, the DTO contains only maximum shared and daily data values. A stored daily limit value of -1 is normalized to 100.
+     *
+     * @param lineId the identifier of the line whose limit policy is requested
+     * @param auth   the requesting user's details used to validate family-group membership
+     * @return       a LimitPolicyResDto containing line limit fields when present; otherwise contains only maxSharedData and maxDailyData
+     */
     @Override
     @Transactional(readOnly = true)
     public LimitPolicyResDto getLimitPolicy(Long lineId, AuthUserDetails auth) {
@@ -370,6 +413,17 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         }
     }
 
+    /**
+     * Toggle the active state of the daily data limit for the specified line.
+     *
+     * If a LineLimit exists, flips its daily-limit active flag, emits the corresponding alarm,
+     * synchronizes the updated limits to the write-through store, and returns the updated policy.
+     * If no LineLimit exists, creates a new default LineLimit and returns it.
+     *
+     * @param lineId the identifier of the line whose daily limit should be toggled
+     * @param auth   the authenticated user performing the operation (used for authorization)
+     * @return a LimitPolicyResDto reflecting the line's daily and shared limits and their active states after the operation
+     */
     @Override
     @Transactional
     public LimitPolicyResDto toggleDailyTotalLimitPolicy(Long lineId, AuthUserDetails auth) {
@@ -416,6 +470,16 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         }
     }
 
+    /**
+     * Update the daily data limit value for an existing line limit policy.
+     *
+     * @param request contains the target limitPolicyId and the new daily limit value
+     * @param auth    caller identity used to verify family-group ownership
+     * @return a LimitPolicyResDto reflecting the updated dailyDataLimit, the active flags, and the shared limit values
+     * @throws ApplicationException with PolicyErrorCode.LIMIT_POLICY_NOT_FOUND if the specified limitPolicyId does not exist
+     * @throws ApplicationException with PolicyErrorCode.LINE_OWNERSHIP_FORBIDDEN if the caller is not authorized for the target line
+     * @throws ApplicationException with CommonErrorCode.DATABASE_ERROR if the update failed to persist
+     */
     @Override
     @Transactional
     public LimitPolicyResDto updateDailyTotalLimitPolicyValue(LimitPolicyUpdateReqDto request, AuthUserDetails auth) {
@@ -457,6 +521,19 @@ public class UserPolicyServiceImpl implements UserPolicyService {
                 .build();
     }
 
+    /**
+     * Toggles the shared-pool (shared data) limit active state for the specified line.
+     *
+     * If a LineLimit exists for the line, flips its shared-limit active flag, emits an alarm
+     * indicating creation or deletion of the shared-data limit, synchronizes the updated
+     * limit to the write-through service, and returns the updated policy DTO. If no LineLimit
+     * exists or it is deleted, a new LineLimit is created and returned.
+     *
+     * @param lineId the identifier of the line whose shared-pool limit should be toggled
+     * @param auth   the authenticated user performing the operation (used for ownership checks)
+     * @return       a LimitPolicyResDto containing the line's daily/shared limits and their active flags
+     * @throws ApplicationException if a database update fails
+     */
     @Override
     @Transactional
     public LimitPolicyResDto toggleSharedPoolLimitPolicy(Long lineId, AuthUserDetails auth) {
@@ -505,10 +582,11 @@ public class UserPolicyServiceImpl implements UserPolicyService {
     }
 
     /**
-     * 새로운 LineLimit 레코드 삽입 후 DTO return
+     * Create a new LineLimit with default values, emit creation alarms, synchronize it via write-through, and return a DTO representing the created limit.
      *
-     * @param lineId 회선 식별자
-     * @return LimitPolicyResDto
+     * @param lineId the identifier of the line for which the limit is created
+     * @return a LimitPolicyResDto representing the newly created line limit and its flags
+     * @throws ApplicationException if persisting the new LineLimit to the database fails
      */
     private LimitPolicyResDto insertNewLineLimit(Long lineId) {
         LineLimit newLineLimit = LineLimit.builder()
@@ -545,6 +623,14 @@ public class UserPolicyServiceImpl implements UserPolicyService {
                 .build();
     }
 
+    /**
+     * Update the shared pool data limit for an existing line limit policy.
+     *
+     * @param request contains the target limit policy ID and the new shared data limit value
+     * @param auth    the authenticated user performing the update (used for ownership check)
+     * @return a LimitPolicyResDto reflecting the updated sharedDataLimit and the current daily limit values and active flags
+     * @throws ApplicationException if the limit policy ID does not exist (LIMIT_POLICY_NOT_FOUND), if the caller is not authorized for the target line (LINE_OWNERSHIP_FORBIDDEN), or if the database update fails (DATABASE_ERROR)
+     */
     @Override
     @Transactional
     public LimitPolicyResDto updateSharedPoolLimitPolicyValue(LimitPolicyUpdateReqDto request, AuthUserDetails auth) {
@@ -640,6 +726,14 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         return null;
     }
 
+    /**
+     * Update the daily data limit for an application policy and return the updated policy DTO.
+     *
+     * @param request contains the target appPolicyId and the new daily data limit value
+     * @param auth    caller authentication used to validate family-group ownership
+     * @return the updated AppPolicyResDto reflecting the new daily data limit
+     * @throws ApplicationException if the app policy is not found (APP_POLICY_NOT_FOUND) or the database update fails (DATABASE_ERROR)
+     */
     @Override
     @Transactional
     public AppPolicyResDto updateAppDataLimit(AppDataLimitUpdateReqDto request, AuthUserDetails auth) {
@@ -680,6 +774,16 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         return updatedResponse;
     }
 
+    /**
+     * Update the app's data speed limit for an existing app policy.
+     *
+     * @param request the request containing the target `appPolicyId` and the new speed limit value
+     * @param auth    the caller's authenticated user details used to validate family ownership
+     * @return        the updated AppPolicyResDto reflecting the new daily speed limit
+     * @throws ApplicationException if the app policy does not exist (PolicyErrorCode.APP_POLICY_NOT_FOUND),
+     *                              if the caller is not permitted to modify the policy's line (PolicyErrorCode.LINE_OWNERSHIP_FORBIDDEN),
+     *                              or if the database update fails (CommonErrorCode.DATABASE_ERROR)
+     */
     @Override
     @Transactional
     public AppPolicyResDto updateAppSpeedLimit(AppSpeedLimitUpdateReqDto request, AuthUserDetails auth) {
@@ -720,6 +824,17 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         return updatedResponse;
     }
 
+    /**
+     * Toggle the active state of an application policy for a line, creating a default active policy if none exists.
+     *
+     * Performs ownership validation, persists the change (or inserts a new policy), emits related alarms, and synchronizes the resulting policy state to the external write-through store.
+     *
+     * @param request contains the target lineId and applicationId used to identify the app policy
+     * @param auth caller credentials used to validate family-group ownership and permissions
+     * @return the resulting AppPolicyResDto reflecting the updated or newly created policy state
+     * @throws ApplicationException with PolicyErrorCode.APP_NOT_FOUND if the application does not exist for the line
+     * @throws ApplicationException with CommonErrorCode.DATABASE_ERROR if a database update/insert fails
+     */
     @Override
     @Transactional
     public AppPolicyResDto toggleAppPolicyActive(AppPolicyActiveToggleReqDto request, AuthUserDetails auth) {
@@ -816,6 +931,16 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         }
     }
 
+    /**
+     * Toggle the whitelist setting for an application policy, emit a corresponding alarm, and synchronize the updated policy to the write-through store.
+     *
+     * This returns a DTO that reflects the policy after the whitelist flag has been toggled.
+     *
+     * @param appPolicyId the identifier of the application policy to toggle
+     * @param auth the authenticated user performing the operation
+     * @return an AppPolicyResDto representing the application policy with the updated whitelist state
+     * @throws ApplicationException if the app policy does not exist (APP_POLICY_NOT_FOUND), if the caller is not authorized for the target line (LINE_OWNERSHIP_FORBIDDEN), or if the database update fails (DATABASE_ERROR)
+     */
     @Override
     @Transactional
     public AppPolicyResDto toggleAppPolicyWhitelist(Long appPolicyId, AuthUserDetails auth) {
@@ -864,6 +989,13 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         return updatedResponse;
     }
 
+    /**
+     * Soft-deletes an application policy, emits related alarms, and evicts the policy from the write-through store.
+     *
+     * @param appPolicyId the identifier of the application policy to delete
+     * @param auth the authenticated user performing the operation (used to validate family-group ownership)
+     * @throws ApplicationException if the app policy does not exist, the delete update fails, or the requester is not permitted to operate on the target line
+     */
     @Override
     @Transactional
     public void deleteAppPolicy(Long appPolicyId, AuthUserDetails auth) {
@@ -895,7 +1027,16 @@ public class UserPolicyServiceImpl implements UserPolicyService {
         );
     }
 
-    @Override
+    /**
+	 * Collects the policies currently applied to a given line.
+	 *
+	 * Retrieves repeat block policies and the immediate block (if present) for the specified line after verifying ownership.
+	 *
+	 * @param lineId the identifier of the line whose applied policies are requested
+	 * @param auth requester authentication details used to verify family-group ownership
+	 * @return an AppliedPolicyResDto containing the list of repeat block policies and the immediate block (or `null` if none)
+	 */
+	@Override
     public AppliedPolicyResDto getAppliedPolicies(Long lineId, AuthUserDetails auth) {
         checkIsSameFamilyGroup(lineId, auth.getLineId(), auth);
 
@@ -919,6 +1060,15 @@ public class UserPolicyServiceImpl implements UserPolicyService {
 
 	}
 
+    /**
+     * Executes a write-through operation with the available TrafficPolicyWriteThroughService or no-ops if none is available.
+     *
+     * If a write-through service can be obtained from the configured provider, the provided callback is invoked with that service;
+     * otherwise the method returns without performing any action.
+     *
+     * @param operationName a descriptive name for the write-through operation (used for logging/debug context)
+     * @param callback a consumer that performs the write-through action using the provided TrafficPolicyWriteThroughService
+     */
     private void applyWriteThrough(
             String operationName,
             java.util.function.Consumer<TrafficPolicyWriteThroughService> callback

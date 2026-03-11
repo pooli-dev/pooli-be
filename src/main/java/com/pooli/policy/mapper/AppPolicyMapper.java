@@ -22,11 +22,26 @@ public interface AppPolicyMapper {
     Optional<AppPolicyResDto> findDtoExistById(Long appPolicyId);
     // pk 로 Entity 조회
     Optional<AppPolicy> findEntityExistById(Long appPolicyId);
-    // 동적 조건 기반 앱 정책 목록 조회
+    /**
+ * Retrieve app policies that match the dynamic search criteria.
+ *
+ * @param request search filters and pagination settings used to select app policies
+ * @return a list of AppPolicyResDto objects matching the provided search conditions
+ */
     List<AppPolicyResDto> findApplicationsWithPolicy(AppPolicySearchCondReqDto request);
-    // 동적 조건 기반 앱 정책 목록 전체 건수 조회
+    /**
+ * Count application policies that match the provided search conditions.
+ *
+ * @param request search criteria used to filter application policies
+ * @return total number of application policies matching the given conditions
+ */
     Long countApplicationsWithPolicy(AppPolicySearchCondReqDto request);
-    // lineId 기준 삭제되지 않은 앱 정책 전체 조회(트래픽 hydration 스냅샷 용도)
+    /**
+ * Retrieve all non-deleted AppPolicy entities for a given line identifier, used for traffic hydration snapshots.
+ *
+ * @param lineId the line identifier to filter policies by
+ * @return a list of AppPolicy entities with the given lineId that are not marked deleted; an empty list if none exist
+ */
     List<AppPolicy> findAllEntityByLineId(@Param("lineId") Long lineId);
 
 

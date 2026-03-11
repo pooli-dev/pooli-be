@@ -25,7 +25,10 @@ public class TrafficInFlightDedupeService {
     private final TrafficRedisKeyFactory trafficRedisKeyFactory;
 
     /**
-      * `tryClaim` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Attempt to acquire an in-flight deduplication lock for the given traceId.
+     *
+     * @param traceId identifier of the trace whose in-flight claim is being requested
+     * @return `true` if the claim was acquired and processing may proceed, `false` if a claim already exists
      */
     public boolean tryClaim(String traceId) {
         // traceId에서 dedupe 키를 생성한다. (namespace 포함)
@@ -48,7 +51,9 @@ public class TrafficInFlightDedupeService {
     }
 
     /**
-      * `release` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Removes the in-flight deduplication lock associated with the given traceId so future processing can proceed.
+     *
+     * @param traceId the trace identifier whose dedupe lock should be removed; ignored if null or blank
      */
     public void release(String traceId) {
         // DONE 저장/ACK 완료 후에는 in-flight 키를 정리해 불필요한 키 잔존을 줄인다.

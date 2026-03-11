@@ -68,6 +68,11 @@ public class TrafficPolicyBootstrapService {
     private final TrafficRedisKeyFactory trafficRedisKeyFactory;
     private final TrafficRedisRuntimePolicy trafficRedisRuntimePolicy;
 
+    /**
+     * Perform a single policy activation bootstrap at application startup to synchronize the database snapshot of policy activation states to Redis.
+     *
+     * @throws ApplicationException if required policy IDs are missing in the database snapshot (fail-fast behavior)
+     */
     @PostConstruct
     /**
       * 애플리케이션 부팅 시 정책 활성화 키 bootstrap을 1회 수행합니다.
@@ -76,6 +81,11 @@ public class TrafficPolicyBootstrapService {
         synchronizePolicyActivationSnapshot("startup", true);
     }
 
+    /**
+     * Periodically reconciles policy activation keys in Redis to reflect the database state.
+     *
+     * Does not propagate exceptions — failures are logged and the scheduler thread continues to the next cycle.
+     */
     @Scheduled(
             fixedDelayString = "${app.policy.bootstrap.reconcile-interval-ms:300000}",
             initialDelayString = "${app.policy.bootstrap.reconcile-initial-delay-ms:60000}"
@@ -93,10 +103,16 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * POLICY 스냅샷을 Redis에 동기화하는 공통 진입점입니다.
+     * Synchronizes policy activation snapshots from the database to Redis under a distributed lock.
      *
-     * @param executionType startup/reconcile 구분 로그
-     * @param failFastOnMissingRequiredIds 필수 policy id 누락 시 예외 전파 여부
+     * Validates required policy IDs, attempts to acquire a lock to serialize Redis writes, applies the snapshot
+     * state to Redis if the lock is obtained, and always releases the lock when finished.
+     *
+     * @param executionType a label describing the invocation context (e.g., "startup" or "reconcile") used in logs
+     * @param failFastOnMissingRequiredIds if `true`, throw an ApplicationException when required policy IDs are missing;
+     *                                     if `false`, log the condition and skip synchronization
+     * @throws com.pooli.common.exception.ApplicationException when required policy IDs are missing and
+     *                                                         {@code failFastOnMissingRequiredIds} is {@code true}
      */
     private void synchronizePolicyActivationSnapshot(String executionType, boolean failFastOnMissingRequiredIds) {
         List<PolicyActivationSnapshotResDto> snapshots = policyBackOfficeMapper.selectPolicyActivationSnapshot();
@@ -129,7 +145,15 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * 필수 정책 ID(1~7)가 DB 스냅샷에 모두 존재하는지 검증합니다.
+     * Verify that all required policy IDs (1 through 7) are present in the provided DB snapshots.
+     *
+     * If any required IDs are missing and `failFastOnMissingRequiredIds` is true, an ApplicationException is thrown.
+     * Otherwise the method logs an error and returns false.
+     *
+     * @param snapshots                       list of policy activation snapshots to inspect; null is treated as empty
+     * @param failFastOnMissingRequiredIds    if true, throw ApplicationException when required IDs are missing; if false, log and return false
+     * @return                                `true` if all required policy IDs are present, `false` otherwise
+     * @throws ApplicationException           when required policy IDs are missing and `failFastOnMissingRequiredIds` is true
      */
     private boolean validateRequiredPolicyIds(
             List<PolicyActivationSnapshotResDto> snapshots,
@@ -161,13 +185,28 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * DB 스냅샷을 Redis policy 키에 pipeline으로 일괄 반영합니다.
+     * Apply database policy activation snapshots to Redis in a single pipeline operation.
+     *
+     * For each snapshot, sets the corresponding policy key to "1" when active or removes the key when inactive,
+     * then updates the bootstrap version key to the computed epoch-second version.
+     *
+     * @param snapshots list of policy activation snapshots; entries that are null or have a null policyId are ignored
      */
     private void syncSnapshotToRedis(List<PolicyActivationSnapshotResDto> snapshots) {
         long bootstrapVersionEpochSeconds = resolveBootstrapVersionEpochSeconds(snapshots);
         String versionKey = trafficRedisKeyFactory.policyBootstrapVersionKey();
 
         cacheStringRedisTemplate.executePipelined(new SessionCallback<>() {
+            /**
+             * Applies the provided policy activation snapshots to Redis and updates the bootstrap version key.
+             *
+             * For each non-null snapshot with a non-null policyId, sets the corresponding policy key to `"1"`
+             * when the snapshot is active, or deletes the policy key when it is not active. After processing
+             * all snapshots, writes the computed bootstrap version epoch seconds to the specified version key.
+             *
+             * @param operations the Redis operations context used to perform value set/delete operations
+             * @return null
+             */
             @Override
             @SuppressWarnings("unchecked")
             public Object execute(RedisOperations operations) {
@@ -195,8 +234,12 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * 스냅샷의 최신 변경 시각을 epoch seconds로 계산합니다.
-     * updatedAt이 없으면 createdAt을 사용하고, 둘 다 없으면 현재 시각을 사용합니다.
+     * Compute the bootstrap version as the most recent snapshot timestamp expressed in epoch seconds using the runtime zone.
+     *
+     * For each snapshot, the latest available timestamp is taken (prefer `updatedAt` over `createdAt`); if no valid timestamps exist, the current instant's epoch seconds are returned.
+     *
+     * @param snapshots the list of policy activation snapshots to inspect
+     * @return the epoch-second value of the most recent timestamp across the provided snapshots in the configured zone, or the current epoch seconds if none exist
      */
     private long resolveBootstrapVersionEpochSeconds(List<PolicyActivationSnapshotResDto> snapshots) {
         ZoneId zoneId = trafficRedisRuntimePolicy.zoneId();
@@ -209,7 +252,10 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * 스냅샷에서 최신 시각(updatedAt 우선, 없으면 createdAt)을 반환합니다.
+     * Return the latest timestamp from the given snapshot, preferring `updatedAt` when present.
+     *
+     * @param snapshot the policy activation snapshot to inspect
+     * @return the `updatedAt` value if non-null, otherwise the `createdAt` value; returns `null` if `snapshot` is null or neither timestamp is present
      */
     private LocalDateTime resolveLatestTimestamp(PolicyActivationSnapshotResDto snapshot) {
         if (snapshot == null) {
@@ -222,7 +268,11 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * 분산락 획득을 시도합니다.
+     * Attempts to acquire a distributed bootstrap lock in Redis.
+     *
+     * @param lockKey the Redis key used for the lock
+     * @param lockOwner unique identifier for the lock owner
+     * @return true if the lock was acquired, false otherwise
      */
     private boolean tryAcquireLock(String lockKey, String lockOwner) {
         Boolean acquired = cacheStringRedisTemplate.opsForValue().setIfAbsent(
@@ -234,14 +284,20 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * lock 소유자 토큰을 생성합니다.
+     * Create a unique lock owner token for distributed lock operations.
+     *
+     * @param executionType a label identifying the execution context (e.g., "startup" or "reconcile") used as the token prefix
+     * @return a string composed of the executionType, a colon, and a random UUID identifying the lock owner
      */
     private String buildLockOwner(String executionType) {
         return executionType + ":" + UUID.randomUUID();
     }
 
     /**
-     * lock 소유자 비교 후 안전하게 lock을 해제합니다.
+     * Releases the distributed bootstrap lock if the stored owner matches the provided owner.
+     *
+     * @param lockKey   the Redis key of the lock to release
+     * @param lockOwner the expected owner value; the lock is deleted only when this matches the key's current value
      */
     private void releaseLock(String lockKey, String lockOwner) {
         try {
@@ -252,7 +308,12 @@ public class TrafficPolicyBootstrapService {
     }
 
     /**
-     * lock 해제를 위한 소유자 검증 Lua를 생성합니다.
+     * Create a Redis script that releases a lock only when the caller owns it.
+     *
+     * The returned script atomically checks that the key's value equals the provided owner argument
+     * and deletes the key only if the check passes.
+     *
+     * @return the `RedisScript<Long>` which returns `1` if the key was deleted, `0` otherwise
      */
     private static RedisScript<Long> createLockReleaseScript() {
         DefaultRedisScript<Long> script = new DefaultRedisScript<>();

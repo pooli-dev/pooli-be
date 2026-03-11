@@ -43,7 +43,17 @@ public class TrafficDeductOrchestratorService {
     private final TrafficTickPacer trafficTickPacer;
 
     /**
-      * `orchestrate` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Orchestrates a multi-tick traffic deduction flow for the provided request payload.
+     *
+     * <p>The method attempts up to 10 sequential ticks to deduct the requested data, preferring the
+     * individual pool and falling back to the shared pool when the individual pool returns
+     * `NO_BALANCE`. The orchestration terminates early if an unrecoverable Lua status is observed.
+     * Final outcome is resolved as success, partial success, or failed; on unexpected exceptions the
+     * final outcome is `FAILED` and the last Lua status is set to `ERROR`.</p>
+     *
+     * @param payload the request payload containing deduction parameters and a trace identifier
+     * @return a TrafficDeductResultResDto summarizing deducted totals, remaining data, final status,
+     *         last observed Lua status, and creation/finish timestamps
      */
     public TrafficDeductResultResDto orchestrate(TrafficPayloadReqDto payload) {
         LocalDateTime startedAt = LocalDateTime.now();
@@ -161,7 +171,11 @@ public class TrafficDeductOrchestratorService {
     }
 
     /**
-      * 현재 상태를 기준으로 다음 단계 계산값을 산출합니다.
+     * Compute the target number of bytes to deduct for the current tick based on remaining data and remaining ticks.
+     *
+     * @param apiRemainingData the remaining number of bytes to fulfill
+     * @param remainingTicks   the number of ticks left (including the current tick)
+     * @return the target bytes for the current tick; zero if `apiRemainingData` <= 0 or `remainingTicks` <= 0
      */
     private long calculateCurrentTickTarget(long apiRemainingData, int remainingTicks) {
         // 동적 분배 규칙: ceil(apiRemainingData / remainingTicks)
@@ -173,7 +187,11 @@ public class TrafficDeductOrchestratorService {
     }
 
     /**
-     * 입력값과 정책을 바탕으로 최종 사용 값을 계산해 반환합니다.
+     * Determine the final traffic deduction status from the remaining data and the last Lua status.
+     *
+     * @param apiRemainingData the remaining bytes of API data to be deducted
+     * @param lastLuaStatus the last observed Lua execution status
+     * @return `TrafficFinalStatus.FAILED` if `lastLuaStatus` is `ERROR`; `TrafficFinalStatus.SUCCESS` if `apiRemainingData` is less than or equal to zero; `TrafficFinalStatus.PARTIAL_SUCCESS` otherwise.
      */
     private TrafficFinalStatus resolveFinalStatus(long apiRemainingData, TrafficLuaStatus lastLuaStatus) {
         if (lastLuaStatus == TrafficLuaStatus.ERROR) {
@@ -187,14 +205,20 @@ public class TrafficDeductOrchestratorService {
     }
 
     /**
-     * 현재 상태를 불리언 값으로 확인해 호출 측의 분기 판단을 돕습니다.
+     * Determine whether a Lua status is considered unrecoverable.
+     *
+     * @param status the Lua status to check
+     * @return `true` if the status is one of the unrecoverable statuses, `false` otherwise
      */
     private boolean isUnrecoverableStatus(TrafficLuaStatus status) {
         return status != null && UNRECOVERABLE_STATUSES.contains(status);
     }
 
     /**
-      * `clampRemaining` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Clamp the given value to zero if it is less than or equal to zero.
+     *
+     * @param value the value to clamp
+     * @return the original value if greater than zero, otherwise 0
      */
     private long clampRemaining(long value) {
         if (value <= 0) {
@@ -204,7 +228,10 @@ public class TrafficDeductOrchestratorService {
     }
 
     /**
-     * 비정상 값을 방어하고 안전한 표준 값으로 보정합니다.
+     * Normalize a possibly null or non-positive Long into a safe non-negative primitive long.
+     *
+     * @param value the input Long; if null or less than or equal to zero it is treated as zero
+     * @return `0` if value is null or less than or equal to zero, otherwise the long value
      */
     private long normalizeNonNegative(Long value) {
         if (value == null || value <= 0) {
@@ -214,7 +241,10 @@ public class TrafficDeductOrchestratorService {
     }
 
     /**
-      * 나노초 단위를 밀리초 단위로 변환합니다.
+     * Convert a duration from nanoseconds to milliseconds.
+     *
+     * @param nanos duration in nanoseconds
+     * @return the equivalent duration in milliseconds, or 0 if `nanos` is less than or equal to 0
      */
     private long nanosToMillis(long nanos) {
         if (nanos <= 0) {

@@ -44,16 +44,10 @@ public class TrafficRequestEnqueueService {
     private final AppStreamsProperties appStreamsProperties;
 
     /**
-     * 트래픽 발생 요청을 Streams에 enqueue하고, 추적용 응답(traceId/enqueuedAt)을 반환합니다.
+     * Enqueues a traffic generation request into the configured Redis Stream and returns trace information for the enqueued message.
      *
-     * <p>처리 순서:
-     * 1) traceId 확정(MDC 재사용 또는 신규 생성)
-     * 2) 요청 DTO를 메시지 payload DTO로 변환
-     * 3) payload를 JSON 직렬화
-     * 4) Streams `payload` 필드로 단일 레코드 XADD
-     *
-     * @param request API 요청 본문(lineId, familyId, appId, apiTotalData)
-     * @return enqueue 완료 응답(traceId, enqueuedAt)
+     * @param request the API request body containing lineId, familyId, appId, and apiTotalData
+     * @return a response containing the traceId assigned to the message and the enqueuedAt timestamp in milliseconds
      */
     public TrafficGenerateResDto enqueue(TrafficGenerateReqDto request) {
         String traceId = resolveTraceId();
@@ -111,11 +105,11 @@ public class TrafficRequestEnqueueService {
     }
 
     /**
-     * 메시지 payload DTO를 Streams 적재용 JSON 문자열로 직렬화합니다.
+     * Serialize the traffic payload DTO into a JSON string suitable for Redis Streams.
      *
-     * @param payload 메시지 계약 DTO
-     * @return JSON 문자열
-     * @throws ApplicationException 직렬화 실패 시 INTERNAL_SERVER_ERROR
+     * @param payload the message payload DTO to serialize
+     * @return the JSON representation of the payload
+     * @throws ApplicationException if serialization fails (results in an INTERNAL_SERVER_ERROR)
      */
     private String toPayloadJson(TrafficPayloadReqDto payload) {
         try {
@@ -127,13 +121,13 @@ public class TrafficRequestEnqueueService {
     }
 
     /**
-     * 직렬화된 payload를 Streams 요청 키에 XADD 합니다.
+     * Append a serialized payload to the configured Redis Stream using a single `payload` field.
      *
-     * <p>메시지 구조는 명세에 따라 `field=payload`, `value=<json>` 단일 필드를 사용합니다.
+     * <p>The stream entry uses a single field named `payload` whose value is the provided JSON string.
      *
-     * @param payloadJson 직렬화된 payload JSON
-     * @return 생성된 Streams RecordId
-     * @throws ApplicationException Redis 접근 실패/결과 null 시 EXTERNAL_SYSTEM_ERROR
+     * @param payloadJson the payload serialized as a JSON string
+     * @return the generated Redis Stream RecordId
+     * @throws ApplicationException if the Redis operation fails or yields a null result (mapped to EXTERNAL_SYSTEM_ERROR)
      */
     private RecordId addToStream(String payloadJson) {
         try {

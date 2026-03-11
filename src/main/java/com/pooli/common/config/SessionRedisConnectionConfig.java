@@ -15,6 +15,14 @@ import org.springframework.util.StringUtils;
 @Profile({"default", "local", "api"})
 public class SessionRedisConnectionConfig {
 
+    /**
+     * Creates the primary RedisConnectionFactory used for Spring Session, configured for a standalone Redis instance.
+     *
+     * @param host the Redis server hostname
+     * @param port the Redis server port
+     * @param password the Redis password; if empty or blank, no password is configured
+     * @return a Lettuce-based RedisConnectionFactory configured with the given host, port, and optional password
+     */
     @Bean("springSessionRedisConnectionFactory")
     @Primary
     public RedisConnectionFactory springSessionRedisConnectionFactory(

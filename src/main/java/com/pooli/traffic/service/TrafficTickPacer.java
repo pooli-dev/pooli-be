@@ -7,9 +7,11 @@ package com.pooli.traffic.service;
 public interface TrafficTickPacer {
 
     /**
-     * @param orchestrationStartNano 오케스트레이션 시작 시점(System.nanoTime 기준)
-     * @param tickNumber             1부터 시작하는 tick 번호
-     * @return                       스케줄된 tick 시작 시각 대비 지연 시간(ms, 음수 없음)
-     */
+ * Waits until the scheduled start of the specified tick and returns the observed lag.
+ *
+ * @param orchestrationStartNano the orchestration start time in nanoseconds (as returned by System.nanoTime())
+ * @param tickNumber             the 1-based tick index
+ * @return                       the delay in milliseconds between the scheduled tick start and the actual return time; zero or positive
+ */
     long awaitTickStart(long orchestrationStartNano, int tickNumber);
 }

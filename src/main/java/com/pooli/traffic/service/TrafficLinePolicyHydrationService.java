@@ -51,7 +51,14 @@ public class TrafficLinePolicyHydrationService {
     private final TrafficLuaScriptInfraService trafficLuaScriptInfraService;
 
     /**
-     * 대상 lineId의 정책 스냅샷이 Redis에 존재하도록 보장합니다.
+     * Ensures a line's policy snapshot exists in Redis so the line is ready for use.
+     *
+     * If the snapshot is absent, this method attempts to acquire a distributed lock to perform hydration;
+     * if the lock is held by another process it will wait briefly for readiness and may fall back to
+     * a single self-hydration attempt if the lock is not obtained.
+     *
+     * @param lineId the line identifier; must be greater than zero
+     * @throws IllegalArgumentException if {@code lineId} is less than or equal to zero
      */
     public void ensureLoaded(long lineId) {
         if (lineId <= 0) {
@@ -89,7 +96,14 @@ public class TrafficLinePolicyHydrationService {
     }
 
     /**
-     * DB 스냅샷을 읽어 회선 정책 키를 Redis에 반영합니다.
+     * Load a line's policy snapshot from the database and publish it to the policy store and Redis readiness key.
+     *
+     * Reads line limit, immediate block, repeat block, and app policy data for the given lineId, writes those
+     * snapshots to the target policy store via the write-through service, and sets the provided Redis readyKey
+     * with a TTL to indicate the snapshot is ready.
+     *
+     * @param lineId  the identifier of the line whose policy snapshot will be hydrated
+     * @param readyKey the Redis key used to mark the line's policy snapshot as ready (set with a configured TTL)
      */
     private void hydrateSnapshot(long lineId, String readyKey) {
         long startedNano = System.nanoTime();
@@ -137,7 +151,11 @@ public class TrafficLinePolicyHydrationService {
     }
 
     /**
-     * hydrate 선행 수행 인스턴스를 하나로 제한하기 위해 분산락 획득을 시도합니다.
+     * Attempts to acquire a distributed lock that designates a single instance to perform hydration.
+     *
+     * @param lockKey   Redis key used for the distributed lock
+     * @param lockOwner Unique identifier for the lock owner
+     * @return `true` if the lock was acquired, `false` otherwise
      */
     private boolean tryAcquireLock(String lockKey, String lockOwner) {
         Boolean acquired = cacheStringRedisTemplate.opsForValue().setIfAbsent(
@@ -149,7 +167,12 @@ public class TrafficLinePolicyHydrationService {
     }
 
     /**
-     * lock 미획득 인스턴스에서 짧게 ready 키를 재확인합니다.
+     * Waits briefly, rechecking the provided readiness key up to a small number of times.
+     *
+     * Repeatedly checks whether the given ready key exists, sleeping between attempts.
+     *
+     * @param readyKey the Redis key that indicates readiness
+     * @return `true` if the ready key is present during the retries or on the final check, `false` otherwise
      */
     private boolean waitUntilReady(String readyKey) {
         for (int attempt = 0; attempt < READY_RECHECK_MAX; attempt++) {
@@ -162,14 +185,21 @@ public class TrafficLinePolicyHydrationService {
     }
 
     /**
-     * ready 키 존재 여부를 확인합니다.
+     * Check whether the readiness key exists in Redis.
+     *
+     * @param readyKey the Redis key that represents readiness
+     * @return `true` if the key exists in Redis, `false` otherwise
      */
     private boolean isReady(String readyKey) {
         return Boolean.TRUE.equals(cacheStringRedisTemplate.hasKey(readyKey));
     }
 
     /**
-     * 소유자 검증 기반으로 분산락을 해제합니다.
+     * Releases a distributed lock identified by the given key only if the lock is currently owned by the provided owner.
+     *
+     * @param lockKey   the Redis key representing the distributed lock
+     * @param lockOwner the owner identifier used to validate ownership before releasing the lock
+     * @implNote Logs a warning if the lock release operation fails. 
      */
     private void releaseLock(String lockKey, String lockOwner) {
         try {
@@ -180,7 +210,9 @@ public class TrafficLinePolicyHydrationService {
     }
 
     /**
-     * 짧은 대기로 busy polling을 완화합니다.
+     * Pauses the current thread briefly to reduce busy polling.
+     *
+     * Sleeps for READY_RECHECK_SLEEP_MS milliseconds; if interrupted, restores the thread's interrupted status.
      */
     private void sleepBriefly() {
         try {

@@ -11,13 +11,26 @@ import com.pooli.policy.domain.dto.response.PolicyActivationSnapshotResDto;
 @Mapper
 public interface PolicyBackOfficeMapper {
 	
-	// 백오피스에서 활성화한 전체 정책 목록 조회
+	/**
+ * Retrieve the list of policies activated in the back office.
+ *
+ * @return a List of ActivePolicyResDto representing policies activated in the back office; an empty list if none are found
+ */
     List<ActivePolicyResDto> selectActivePolicies();
     
-	// 백오피스에서 활성화한 정책 단건 조회
+	/**
+ * Retrieve the activated policy for the given policyId from the back office.
+ *
+ * @param policyId the identifier of the policy to retrieve
+ * @return the activated policy matching the given policyId, or {@code null} if none is found
+ */
     ActivePolicyResDto selectActivePolicy(@Param("policyId") Integer policyId);
 
-    // 정책 전역 활성화 bootstrap/reconciliation용 스냅샷 조회
+    /**
+ * Retrieve a snapshot of policy activation state used for global bootstrap and reconciliation.
+ *
+ * @return a list of PolicyActivationSnapshotResDto objects representing activation snapshots; empty list if no snapshots are available
+ */
     List<PolicyActivationSnapshotResDto> selectPolicyActivationSnapshot();
 	    
 }

@@ -30,14 +30,20 @@ public class TrafficRedisRuntimePolicy {
     private static final DateTimeFormatter YYYYMM_FORMATTER = DateTimeFormatter.ofPattern("yyyyMM");
 
     /**
-      * `zoneId` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Provides the ZoneId used for policy calculations.
+     *
+     * @return the ZoneId for the Asia/Seoul time zone used by this policy
      */
     public ZoneId zoneId() {
         return ASIA_SEOUL_ZONE_ID;
     }
 
     /**
-     * 도메인 규칙에 맞는 문자열 형식으로 변환합니다.
+     * Format a LocalDate as the domain key suffix using the pattern yyyyMMdd.
+     *
+     * @param targetDate the date to format as yyyyMMdd
+     * @return the formatted date string in yyyyMMdd
+     * @throws NullPointerException if {@code targetDate} is null
      */
     public String formatYyyyMmDd(LocalDate targetDate) {
         // 키 suffix(yyyymmdd) 규칙을 일관되게 유지한다.
@@ -45,7 +51,11 @@ public class TrafficRedisRuntimePolicy {
     }
 
     /**
-     * 도메인 규칙에 맞는 문자열 형식으로 변환합니다.
+     * Format a YearMonth as the domain key suffix in `yyyyMM` form.
+     *
+     * @param targetMonth the year-month to format
+     * @return the formatted year-month string in `yyyyMM` format
+     * @throws NullPointerException if `targetMonth` is null
      */
     public String formatYyyyMm(YearMonth targetMonth) {
         // 키 suffix(yyyymm) 규칙을 일관되게 유지한다.
@@ -53,7 +63,11 @@ public class TrafficRedisRuntimePolicy {
     }
 
     /**
-     * 입력값과 정책을 바탕으로 최종 사용 값을 계산해 반환합니다.
+     * Compute the expiration instant for a given date using the "end of day plus 8 hours" rule in Asia/Seoul.
+     *
+     * @param targetDate the date for which to compute the expiration; must not be null
+     * @return the Instant representing targetDate's end of day plus 8 hours in the Asia/Seoul time zone
+     * @throws NullPointerException if {@code targetDate} is null
      */
     public Instant resolveDailyExpireAt(LocalDate targetDate) {
         // "일말 + 8h" 규칙:
@@ -65,7 +79,10 @@ public class TrafficRedisRuntimePolicy {
     }
 
     /**
-     * 입력값과 정책을 바탕으로 최종 사용 값을 계산해 반환합니다.
+     * Compute the epoch-second timestamp for the daily expiration instant, defined as the end of the given date plus 8 hours in the Asia/Seoul time zone.
+     *
+     * @param targetDate the date whose daily expiration to compute; must not be null
+     * @return the epoch second of the expiration instant (end of targetDate plus 8 hours in Asia/Seoul)
      */
     public long resolveDailyExpireAtEpochSeconds(LocalDate targetDate) {
         // Redis EXPIREAT는 epoch seconds를 사용하므로 변환값을 제공한다.
@@ -73,7 +90,11 @@ public class TrafficRedisRuntimePolicy {
     }
 
     /**
-     * 입력값과 정책을 바탕으로 최종 사용 값을 계산해 반환합니다.
+     * Compute the expiration Instant for a month according to the "end of month plus 10 days" policy in Asia/Seoul time zone.
+     *
+     * @param targetMonth the YearMonth to base the expiration on
+     * @return the Instant representing the expiration moment (end of the target month plus 10 days, in Asia/Seoul)
+     * @throws NullPointerException if targetMonth is null
      */
     public Instant resolveMonthlyExpireAt(YearMonth targetMonth) {
         // "월말 + 10d" 규칙:
@@ -87,7 +108,10 @@ public class TrafficRedisRuntimePolicy {
     }
 
     /**
-     * 입력값과 정책을 바탕으로 최종 사용 값을 계산해 반환합니다.
+     * Compute the epoch-second timestamp for the monthly expiration according to the policy.
+     *
+     * @param targetMonth the target YearMonth to compute the expiration for
+     * @return the epoch second of the monthly expiration instant (suitable for Redis EXPIREAT)
      */
     public long resolveMonthlyExpireAtEpochSeconds(YearMonth targetMonth) {
         // Redis EXPIREAT는 epoch seconds를 사용하므로 변환값을 제공한다.

@@ -17,6 +17,12 @@ import org.springframework.util.StringUtils;
 @EnableConfigurationProperties({StreamsRedisProperties.class, AppStreamsProperties.class, AppRedisProperties.class})
 public class StreamsRedisConfig {
 
+    /**
+     * Creates a Redis connection factory configured for a standalone Redis instance using the provided properties.
+     *
+     * @param properties configuration containing Redis host, port, and optional password
+     * @return a Lettuce-based RedisConnectionFactory configured with the specified host, port, and password (if provided)
+     */
     @Bean("streamsRedisConnectionFactory")
     public RedisConnectionFactory streamsRedisConnectionFactory(StreamsRedisProperties properties) {
         RedisStandaloneConfiguration configuration =
@@ -29,6 +35,12 @@ public class StreamsRedisConfig {
         return new LettuceConnectionFactory(configuration);
     }
 
+    /**
+     * Creates a StringRedisTemplate bound to the streams Redis connection factory.
+     *
+     * @param connectionFactory the RedisConnectionFactory for the streams Redis instance (qualified as "streamsRedisConnectionFactory")
+     * @return a StringRedisTemplate that uses the provided connection factory
+     */
     @Bean("streamsStringRedisTemplate")
     public StringRedisTemplate streamsStringRedisTemplate(
             @Qualifier("streamsRedisConnectionFactory") RedisConnectionFactory connectionFactory

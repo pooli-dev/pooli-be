@@ -1,12 +1,18 @@
 -- deduct_indiv_tick.lua
 -- 반환 형식: {"answer":number,"status":"..."} JSON 문자열
 -- 정책 적용 순서(개인풀):
--- whitelist -> immediate -> repeat -> daily -> app_daily -> app_speed
+-- Encode the numeric answer and status label into a JSON string.
+-- @param answer The numeric value representing the deducted or granted amount.
+-- @param status A short status string describing the outcome (e.g., "OK", "ERROR").
+-- @return A JSON-encoded string with fields `answer` (number) and `status` (string).
 
 local function as_json(answer, status)
   return cjson.encode({ answer = answer, status = status })
 end
 
+-- Determines whether a policy is enabled by checking for the presence of its Redis key.
+-- @param policy_key Redis key that represents the policy flag; nil or empty keys are treated as disabled.
+-- @return `true` if the Redis key exists (policy enabled), `false` otherwise.
 local function is_policy_enabled(policy_key)
   if not policy_key or policy_key == "" then
     return false
@@ -14,6 +20,11 @@ local function is_policy_enabled(policy_key)
   return redis.call("EXISTS", policy_key) == 1
 end
 
+-- Checks whether the given second-of-day falls within any configured repeat-block range for the specified day.
+-- @param repeat_block_key Redis hash key that contains repeat-block entries named "day:<day_num>:*"; each entry's value is a "start:end" range in seconds.
+-- @param day_num Integer day index (typically 0–6) to match against keys in the hash.
+-- @param sec_of_day Integer second within the day (0–86399) to test for inclusion in any range.
+-- @return `true` if `sec_of_day` is within any "start:end" range for `day_num` in `repeat_block_key`, `false` otherwise.
 local function is_in_repeat_block(repeat_block_key, day_num, sec_of_day)
   if not repeat_block_key or repeat_block_key == "" then
     return false

@@ -48,16 +48,13 @@ public class TrafficHydrateRefillAdapterService {
     private final TrafficLinePolicyHydrationService trafficLinePolicyHydrationService;
 
     /**
-     * 개인풀 차감 경로를 실행합니다.
+     * Executes the deduction flow for an individual pool, including hydrate and refill recovery when needed.
      *
-     * <p>호출자는 현재 tick 목표량을 전달하고, 이 메서드는 아래 흐름을 일괄 처리합니다.
-     * 1) 개인풀 Lua 1차 차감
-     * 2) 필요 시 HYDRATE 복구 후 재차감
-     * 3) 필요 시 REFILL 게이트/락/DB 차감/Redis 충전 후 재차감
+     * Performs an initial individual-pool Lua deduction and, if required, attempts a hydrate recovery and/or a refill (gate, lock, DB claim, Redis refill) followed by a same-tick reattempt of deduction.
      *
-     * @param payload 요청 단위 컨텍스트(traceId/lineId/familyId/appId 등)
-     * @param currentTickTargetData 현재 tick에서 처리해야 할 목표 바이트
-     * @return 개인풀 경로 최종 Lua 실행 결과(answer/status)
+     * @param payload                request context containing traceId, lineId, familyId, appId, and related data
+     * @param currentTickTargetData  target number of bytes to process for the current tick
+     * @return                       the final TrafficLuaExecutionResult from the individual-pool deduction path
      */
     public TrafficLuaExecutionResult executeIndividualWithRecovery(TrafficPayloadReqDto payload, long currentTickTargetData) {
         // 개인풀 분기 처리를 공통 메서드로 위임해 중복 코드를 줄인다.
@@ -65,14 +62,12 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 공유풀 차감 경로를 실행합니다.
+     * Execute the shared-pool deduction flow, applying hydrate and refill recovery rules while
+     * interpreting balance/lock/owner identifiers by the shared familyId.
      *
-     * <p>개인풀과 동일한 복구 규칙(HYDRATE/REFILL)을 적용하되,
-     * 키/락/소유자 식별자는 공유풀(familyId) 기준으로 해석합니다.
-     *
-     * @param payload 요청 단위 컨텍스트
-     * @param currentTickTargetData 현재 tick에서 공유풀에 요청할 목표 바이트
-     * @return 공유풀 경로 최종 Lua 실행 결과(answer/status)
+     * @param payload context for the shared-pool request (trace, line, family, app and usage details)
+     * @param currentTickTargetData target number of bytes to deduct from the shared pool for this tick
+     * @return the final TrafficLuaExecutionResult containing the Lua script answer and status for the shared-pool deduction
      */
     public TrafficLuaExecutionResult executeSharedWithRecovery(TrafficPayloadReqDto payload, long currentTickTargetData) {
         // 공유풀 분기 처리를 공통 메서드로 위임해 중복 코드를 줄인다.
@@ -80,19 +75,15 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 풀 타입(개인/공유) 공통 복구 오케스트레이션을 수행합니다.
+     * Orchestrates the common recovery flow for individual and shared traffic pools.
      *
-     * <p>진행 순서:
-     * 1) payload 유효성 검증(필수 식별자/traceId/apiTotalData)
-     * 2) 대상 월/잔량 키 계산
-     * 3) 1차 Lua 차감
-     * 4) HYDRATE 필요 시 복구 + 같은 tick 재시도
-     * 5) NO_BALANCE 시 REFILL 분기 처리
+     * <p>Performs an initial Lua deduction, optionally attempts a hydrate retry when hydration is required,
+     * and optionally attempts a refill flow when no balance is available, then returns the resulting execution state.
      *
-     * @param poolType 처리 대상 풀 유형
-     * @param payload 요청 컨텍스트
-     * @param currentTickTargetData 현재 tick 목표 바이트
-     * @return 복구 분기까지 반영된 최종 실행 결과
+     * @param poolType the pool type to process (INDIVIDUAL or SHARED)
+     * @param payload request context containing identifiers and usage information
+     * @param currentTickTargetData target byte amount for the current tick
+     * @return the final TrafficLuaExecutionResult reflecting the outcome after hydrate/refill recovery steps
      */
     private TrafficLuaExecutionResult executeWithRecovery(
             TrafficPoolType poolType,
@@ -144,21 +135,21 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 현재 결과가 HYDRATE일 때만 DB 원천값으로 Redis 키를 복구하고 재시도합니다.
-     *
-     * <p>처리 규칙:
-     * - status가 HYDRATE가 아니면 입력 결과를 그대로 반환
-     * - HYDRATE면 DB 초기량으로 `hydrateBalance` 수행 후 같은 tick에서 Lua 1회 재호출
-     * - 재시도 후에도 HYDRATE면 상위가 실패/후속 분기를 결정하도록 그대로 반환
-     *
-     * @param poolType 처리 대상 풀 유형
-     * @param payload 요청 컨텍스트
-     * @param targetMonth 월 기준 키 계산 값
-     * @param balanceKey Redis 잔량 키
-     * @param currentTickTargetData 현재 tick 목표 바이트
-     * @param currentResult 1차 Lua 결과
-     * @return hydrate 처리 후 결과(또는 원본 결과)
-     */
+         * Attempts to recover from a HYDRATE response by restoring the Redis balance from the source and retrying deduction once.
+         *
+         * <p>Behavior:
+         * - If the provided result status is not HYDRATE, the original result is returned unchanged.
+         * - If the status is HYDRATE, restores the Redis balance using the source-provided initial amount and re-executes the deduct Lua call up to one retry.
+         * - If the retry yields a non-HYDRATE status, that result is returned; otherwise the final HYDRATE result is returned unchanged.
+         *
+         * @param poolType the pool type being processed (INDIVIDUAL or SHARED)
+         * @param payload request context containing identifiers and usage data
+         * @param targetMonth month used to compute balance expiry and keys
+         * @param balanceKey Redis key holding the remaining balance to restore
+         * @param currentTickTargetData the target byte amount for the current tick
+         * @param currentResult the initial Lua execution result that triggered (or did not trigger) hydrate
+         * @return the TrafficLuaExecutionResult after hydrate/retry processing, or the original result if no hydrate was performed
+         */
     private TrafficLuaExecutionResult handleHydrateIfNeeded(
             TrafficPoolType poolType,
             TrafficPayloadReqDto payload,
@@ -190,24 +181,19 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 현재 결과가 NO_BALANCE일 때 REFILL 게이트/락/DB 차감/Redis 충전을 수행합니다.
+     * Attempt a refill when the current result indicates no balance, claim refill amount from the database,
+     * apply the refill to Redis, and re-run the deduction once for the same tick if refill is applied.
      *
-     * <p>핵심 흐름:
-     * 1) NO_BALANCE가 아니면 그대로 반환
-     * 2) 최신 버킷 기반 리필 계획(delta/unit/threshold) 계산
-     * 3) refill_gate.lua로 리필 진입 가능 여부 확인(OK만 진행)
-     * 4) lock heartbeat로 소유권 확인(소유자만 진행)
-     * 5) DB에서 actualRefillAmount 확보(min(requested, dbRemaining))
-     * 6) actualRefillAmount > 0 이면 Redis 충전 후 같은 tick 재차감 1회
-     * 7) finally에서 lock 해제 보장
+     * <p>The method performs gate and lock checks before claiming DB refill amounts, ensures the refill lock
+     * is released in all cases, and returns early if gates or lock ownership prevent a refill.
      *
-     * @param poolType 처리 대상 풀 유형
-     * @param payload 요청 컨텍스트
-     * @param targetMonth 월 기준 키 계산 값
-     * @param balanceKey Redis 잔량 키
-     * @param currentTickTargetData 현재 tick 목표 바이트
-     * @param currentResult HYDRATE 처리 이후 현재 결과
-     * @return refill 처리 이후 결과(또는 원본 결과)
+     * @param poolType the pool type to operate on (INDIVIDUAL or SHARED)
+     * @param payload the request context containing identifiers and trace information
+     * @param targetMonth the YearMonth used to compute monthly expiry for Redis entries
+     * @param balanceKey the Redis key that holds the current remaining balance for the target pool
+     * @param currentTickTargetData the byte amount targeted for the current tick deduction
+     * @param currentResult the execution result observed before attempting refill; method only proceeds when its status is NO_BALANCE
+     * @return the execution result after a potential refill and a single reattempted deduction, or the original result if no refill occurred
      */
     private TrafficLuaExecutionResult handleRefillIfNeeded(
             TrafficPoolType poolType,
@@ -349,13 +335,14 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 풀 유형에 맞는 차감 Lua를 실행합니다.
-     *
-     * @param poolType 개인/공유 풀 구분
-     * @param balanceKey 대상 잔량 Redis 키
-     * @param currentTickTargetData 현재 tick 목표 바이트
-     * @return Lua 차감 결과(answer/status)
-     */
+         * Execute the deduction Lua script appropriate for the given pool type.
+         *
+         * @param poolType the pool type (INDIVIDUAL or SHARED) determining which Lua script and keys to use
+         * @param payload request payload containing appId, lineId, familyId and other request metadata used to build keys/args
+         * @param balanceKey Redis key holding the target balance to be deducted
+         * @param currentTickTargetData number of bytes targeted for deduction in the current tick
+         * @return the Lua deduction result containing the script `answer` and `status`
+         */
     private TrafficLuaExecutionResult executeDeduct(
             TrafficPoolType poolType,
             TrafficPayloadReqDto payload,
@@ -461,12 +448,13 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 풀 유형과 월 기준으로 Redis 잔량 키를 생성합니다.
+     * Resolve the Redis balance key for the given pool type and target month.
      *
-     * @param poolType 개인/공유 풀 구분
-     * @param payload 요청 식별자(lineId/familyId) 포함 컨텍스트
-     * @param targetMonth 키 suffix(yyyymm) 계산 기준 월
-     * @return remaining_indiv/shared_amount 키
+     * @param poolType    the pool type (INDIVIDUAL or SHARED)
+     * @param payload     request context containing identifiers used to build the key:
+     *                    for INDIVIDUAL uses payload.getLineId(), for SHARED uses payload.getFamilyId()
+     * @param targetMonth the month used to compute the key suffix
+     * @return the Redis key for the remaining amount for the specified pool and month
      */
     private String resolveBalanceKey(TrafficPoolType poolType, TrafficPayloadReqDto payload, YearMonth targetMonth) {
         // 풀 유형마다 잔량 키 구조가 다르므로 분기해 생성한다.
@@ -477,11 +465,11 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 풀 유형 기준으로 refill lock 키를 생성합니다.
+     * Resolve the Redis refill-lock key for the specified pool type and request payload.
      *
-     * @param poolType 개인/공유 풀 구분
-     * @param payload 요청 식별자(lineId/familyId) 포함 컨텍스트
-     * @return indiv/shared refill lock 키
+     * @param poolType the pool type (INDIVIDUAL or SHARED) used to select which key to build
+     * @param payload  request context containing the identifier used to construct the key (lineId for individual, familyId for shared)
+     * @return the Redis key string used as the refill lock for the selected pool
      */
     private String resolveLockKey(TrafficPoolType poolType, TrafficPayloadReqDto payload) {
         // 리필 lock 키도 풀 유형마다 다르므로 분기해 생성한다.
@@ -492,13 +480,10 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 요청이 속한 기준 월(YearMonth)을 결정합니다.
+     * Determine the YearMonth to use for DB/Redis monthly keys based on the request.
      *
-     * <p>정합성 규칙에 따라 가능하면 payload.enqueuedAt을 우선 사용하고,
-     * 값이 없거나 비정상이면 런타임 현재 시각(Asia/Seoul) 기준으로 대체합니다.
-     *
-     * @param payload 요청 컨텍스트
-     * @return DB/Redis 월 키 정합성에 사용할 기준 월
+     * @param payload request context whose `enqueuedAt` timestamp will be used when present and valid
+     * @return the YearMonth derived from `payload.enqueuedAt` if it is a positive timestamp; otherwise the current YearMonth in the configured runtime zone
      */
     private YearMonth resolveTargetMonth(TrafficPayloadReqDto payload) {
         Long enqueuedAt = payload.getEnqueuedAt();
@@ -512,14 +497,11 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 풀 처리에 필요한 필수 payload 값이 모두 있는지 검증합니다.
+     * Validates that the request payload contains all required fields for the specified pool type.
      *
-     * <p>공통 필수값: traceId, lineId, appId, apiTotalData(0 이상)<br>
-     * 풀별 필수값: INDIVIDUAL=lineId, SHARED=familyId(+lineId 공통 필수)
-     *
-     * @param poolType 검증 대상 풀 유형
-     * @param payload 검증할 요청 컨텍스트
-     * @return 유효하면 true, 누락/비정상이 있으면 false
+     * @param poolType the pool type to validate for
+     * @param payload the request payload to validate
+     * @return `true` if the payload contains all required fields for the given pool type, `false` otherwise
      */
     private boolean isPayloadValidForPool(TrafficPoolType poolType, TrafficPayloadReqDto payload) {
         if (payload == null) {
@@ -546,9 +528,9 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * 유효성 실패 등 즉시 종료 상황에서 사용하는 표준 ERROR 결과를 생성합니다.
+     * Create a standard ERROR TrafficLuaExecutionResult used for immediate termination scenarios (e.g., validation failure).
      *
-     * @return answer=-1, status=ERROR
+     * @return a TrafficLuaExecutionResult with answer = -1 and status = ERROR
      */
     private TrafficLuaExecutionResult errorResult() {
         return TrafficLuaExecutionResult.builder()
@@ -558,10 +540,10 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * Long 값을 음수/NULL 방어 규칙으로 0 이상 값으로 보정합니다.
+     * Normalize a Long to a value greater than or equal to zero.
      *
-     * @param value 보정 대상 값
-     * @return 0 이상 정규화 값
+     * @param value the input value to normalize; may be null or negative
+     * @return the original value when greater than zero, or 0 if the input is null or less than or equal to zero
      */
     private long normalizeNonNegative(Long value) {
         if (value == null || value <= 0) {
@@ -571,10 +553,10 @@ public class TrafficHydrateRefillAdapterService {
     }
 
     /**
-     * Integer 값을 음수/NULL 방어 규칙으로 0 이상 값으로 보정합니다.
+     * Normalize an Integer to an int value that is greater than or equal to zero.
      *
-     * @param value 보정 대상 값
-     * @return 0 이상 정규화 값
+     * @param value the Integer to normalize; may be null
+     * @return an int greater than or equal to zero — returns 0 if {@code value} is null or less than or equal to 0, otherwise returns {@code value}
      */
     private int normalizeNonNegativeInt(Integer value) {
         if (value == null || value <= 0) {

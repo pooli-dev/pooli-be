@@ -12,7 +12,19 @@ import com.pooli.traffic.domain.entity.TrafficDeductDone;
 @Mapper
 public interface TrafficDeductDoneMapper {
 
-    int insertIgnore(@Param("done") TrafficDeductDone done);
+    /**
+ * Insert a TrafficDeductDone record while ignoring conflicts on duplicate traceId.
+ *
+ * @param done the TrafficDeductDone entity to insert (bound to SQL parameter "done")
+ * @return the number of rows inserted: 1 if the record was inserted, 0 if the insert was ignored due to a duplicate traceId
+ */
+int insertIgnore(@Param("done") TrafficDeductDone done);
 
-    boolean existsByTraceId(@Param("traceId") String traceId);
+    /**
+ * Checks whether a record with the given traceId exists.
+ *
+ * @param traceId the trace identifier to look up
+ * @return `true` if a matching record exists, `false` otherwise
+ */
+boolean existsByTraceId(@Param("traceId") String traceId);
 }

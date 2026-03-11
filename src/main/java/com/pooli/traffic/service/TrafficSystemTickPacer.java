@@ -19,7 +19,12 @@ public class TrafficSystemTickPacer implements TrafficTickPacer {
     private final long tickIntervalNanos;
 
     /**
-      * `Value` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Creates a TrafficSystemTickPacer configured with the provided tick interval.
+     *
+     * If the configured interval is less than or equal to zero, a default of 1000 ms is used.
+     * The interval is converted from milliseconds to nanoseconds and stored for pacing.
+     *
+     * @param tickIntervalMs configured tick interval in milliseconds; non-positive values are treated as 1000 ms
      */
     public TrafficSystemTickPacer(@Value("${app.traffic.tick-interval-ms:1000}") long tickIntervalMs) {
         // 잘못된 설정(0 이하)을 방어하기 위해 기본값 1000ms를 강제합니다.
@@ -27,6 +32,19 @@ public class TrafficSystemTickPacer implements TrafficTickPacer {
         this.tickIntervalNanos = TimeUnit.MILLISECONDS.toNanos(normalizedIntervalMs);
     }
 
+    /**
+     * Waits until the scheduled start for the specified orchestration tick.
+     *
+     * <p>If the scheduled start has not yet arrived this method blocks until that time; if the
+     * scheduled start is already passed it measures and returns the processing lag.</p>
+     *
+     * @param orchestrationStartNano the orchestration start time in nanoseconds (as returned by System.nanoTime())
+     * @param tickNumber             the 1-based tick index to wait for
+     * @return                       the lag in milliseconds (0 if on time, no lag, or if inputs are invalid)
+     *
+     * <p>If the current thread is interrupted while waiting, the method preserves the thread's
+     * interrupt status and may return early.</p>
+     */
     @Override
     /**
      * 요구되는 시점/조건이 만족될 때까지 대기한 뒤 결과를 반환합니다.

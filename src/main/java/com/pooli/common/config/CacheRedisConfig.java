@@ -17,6 +17,12 @@ import org.springframework.util.StringUtils;
 @EnableConfigurationProperties(CacheRedisProperties.class)
 public class CacheRedisConfig {
 
+    /**
+     * Create a RedisConnectionFactory configured for a standalone Redis instance using cache properties.
+     *
+     * @param properties configuration values (host, port, and optional password) used to configure the connection
+     * @return a Lettuce-based RedisConnectionFactory initialized with the provided host, port, and password (if present)
+     */
     @Bean("cacheRedisConnectionFactory")
     public RedisConnectionFactory cacheRedisConnectionFactory(CacheRedisProperties properties) {
         RedisStandaloneConfiguration configuration =
@@ -29,6 +35,12 @@ public class CacheRedisConfig {
         return new LettuceConnectionFactory(configuration);
     }
 
+    /**
+     * Create a StringRedisTemplate configured to use the cache Redis connection factory.
+     *
+     * @param connectionFactory the RedisConnectionFactory provided by the `cacheRedisConnectionFactory` bean
+     * @return a StringRedisTemplate wired to the specified connection factory
+     */
     @Bean("cacheStringRedisTemplate")
     public StringRedisTemplate cacheStringRedisTemplate(
             @Qualifier("cacheRedisConnectionFactory") RedisConnectionFactory connectionFactory

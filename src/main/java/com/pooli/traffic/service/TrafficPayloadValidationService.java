@@ -23,7 +23,11 @@ public class TrafficPayloadValidationService {
     private final Validator validator;
 
     /**
-      * `validate` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Validate a TrafficPayloadReqDto and produce validation results in a common Violation format.
+     *
+     * @param payload the payload to validate; if `null`, a single Violation with target "payload",
+     *                name "payload", and reason "payload는 필수입니다." is returned
+     * @return a list of Violation objects representing validation failures; empty list if there are no violations
      */
     public List<Violation> validate(TrafficPayloadReqDto payload) {
         // payload 자체가 null이면 이후 필드 단위 검증이 불가능하므로
@@ -48,7 +52,10 @@ public class TrafficPayloadValidationService {
     }
 
     /**
-      * `toViolation` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Convert a ConstraintViolation for TrafficPayloadReqDto into a Violation DTO.
+     *
+     * @param violation the constraint violation to convert (may contain a null property path)
+     * @return a Violation with target "payload", name set to the violation's property path or "unknown" if absent, and reason set to the violation message
      */
     private Violation toViolation(ConstraintViolation<TrafficPayloadReqDto> violation) {
         String fieldName = violation.getPropertyPath() == null

@@ -24,6 +24,12 @@ public class TrafficDeductDonePersistenceService {
 
     private final TrafficDeductDoneMapper trafficDeductDoneMapper;
 
+    /**
+     * Checks whether a DONE record exists for the given orchestration trace identifier.
+     *
+     * @param traceId the orchestration trace identifier used for idempotency; may be null or blank
+     * @return `true` if a DONE record with the given `traceId` exists; `false` otherwise (also `false` when `traceId` is null or blank)
+     */
     @Transactional(readOnly = true)
     /**
       * `existsByTraceId` 처리 목적에 맞는 핵심 로직을 수행합니다.
@@ -36,6 +42,14 @@ public class TrafficDeductDonePersistenceService {
         return trafficDeductDoneMapper.existsByTraceId(traceId);
     }
 
+    /**
+     * Persist a DONE record for the payload's traceId only if no record with the same traceId exists.
+     *
+     * @param payload the request payload containing the required `traceId` and identifier fields; must not be null and `traceId` must not be blank
+     * @param result  the deduction result used to populate result fields and timestamps; must not be null
+     * @return        `true` if a new DONE record was inserted, `false` if a record with the same `traceId` was already present
+     * @throws IllegalArgumentException if `payload` or `result` is null, or if `payload.getTraceId()` is null or blank
+     */
     @Transactional
     /**
       * `saveIfAbsent` 처리 목적에 맞는 핵심 로직을 수행합니다.
@@ -70,7 +84,10 @@ public class TrafficDeductDonePersistenceService {
     }
 
     /**
-      * 입력값이 없을 때 사용할 기본 값을 반환합니다.
+     * Return the provided LocalDateTime, or the current time if the provided value is null.
+     *
+     * @param value the candidate LocalDateTime to use
+     * @return the given value if non-null, otherwise LocalDateTime.now()
      */
     private LocalDateTime defaultNowIfNull(LocalDateTime value) {
         if (value != null) {

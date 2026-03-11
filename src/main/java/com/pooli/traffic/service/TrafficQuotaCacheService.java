@@ -24,7 +24,14 @@ public class TrafficQuotaCacheService {
     private final StringRedisTemplate cacheStringRedisTemplate;
 
     /**
-     * 외부 저장소에서 현재 데이터를 조회해 반환합니다.
+     * Fetches the current "amount" value for the given balance key from Redis.
+     *
+     * If the "amount" field is missing or cannot be parsed as a long, the provided
+     * defaultValue is returned.
+     *
+     * @param balanceKey  the Redis hash key that stores the balance fields
+     * @param defaultValue the value to return when the stored amount is missing or invalid
+     * @return `defaultValue` if the amount field is missing or cannot be parsed as a long, otherwise the parsed long amount
      */
     public long readAmountOrDefault(String balanceKey, long defaultValue) {
         // amount 필드가 없으면 defaultValue를 반환해 호출자가 분기 판단을 이어갈 수 있게 한다.
@@ -43,7 +50,13 @@ public class TrafficQuotaCacheService {
     }
 
     /**
-      * `hydrateBalance` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Initializes the Redis hash for a balance key with an amount and an empty flag, and applies the key expiration.
+     *
+     * If `initialAmount` is negative it is treated as zero. Fields are set only when absent to avoid overwriting existing state.
+     *
+     * @param balanceKey            the Redis key of the balance hash
+     * @param initialAmount         the initial amount to populate; negative values are treated as 0
+     * @param expireAtEpochSeconds  the expiration time for the key expressed as epoch seconds
      */
     public void hydrateBalance(String balanceKey, long initialAmount, long expireAtEpochSeconds) {
         long normalizedAmount = Math.max(0L, initialAmount);
@@ -57,7 +70,13 @@ public class TrafficQuotaCacheService {
     }
 
     /**
-      * `refillBalance` 처리 목적에 맞는 핵심 로직을 수행합니다.
+     * Increments the cached remaining amount for the given balance key, clears the empty flag, and sets the key's expiration.
+     *
+     * <p>If the provided refill amount is less than or equal to zero, the method performs no changes.</p>
+     *
+     * @param balanceKey              the Redis key (hash) identifying the balance entry
+     * @param refillAmount            the amount to add to the existing cached amount; non-positive values are ignored
+     * @param expireAtEpochSeconds    the epoch second at which the key should expire; the TTL is set to this instant
      */
     public void refillBalance(String balanceKey, long refillAmount, long expireAtEpochSeconds) {
         long normalizedRefillAmount = Math.max(0L, refillAmount);
