@@ -35,6 +35,14 @@ public interface TrafficRefillSourceMapper {
     );
 
     /**
+     * 개인풀 원천 잔량을 반납합니다.
+     */
+    int restoreIndividualRemaining(
+            @Param("lineId") Long lineId,
+            @Param("restoreAmount") Long restoreAmount
+    );
+
+    /**
      * 공유풀 원천 잔량을 조회합니다.
      */
     Long selectSharedRemaining(@Param("familyId") Long familyId);
@@ -51,5 +59,13 @@ public interface TrafficRefillSourceMapper {
     int deductSharedRemaining(
             @Param("familyId") Long familyId,
             @Param("deductAmount") Long deductAmount
+    );
+
+    /**
+     * 공유풀 원천 잔량을 반납합니다.
+     */
+    int restoreSharedRemaining(
+            @Param("familyId") Long familyId,
+            @Param("restoreAmount") Long restoreAmount
     );
 }

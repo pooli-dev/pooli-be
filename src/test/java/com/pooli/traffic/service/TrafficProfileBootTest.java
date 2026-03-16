@@ -9,6 +9,8 @@ import com.pooli.monitoring.metrics.TrafficRequestMetrics;
 import com.pooli.traffic.controller.TrafficController;
 import com.pooli.traffic.service.decision.TrafficDeductOrchestratorService;
 import com.pooli.traffic.service.invoke.*;
+import com.pooli.traffic.service.outbox.RedisOutboxRecordService;
+import com.pooli.traffic.service.outbox.TrafficPolicyVersionedRedisService;
 import com.pooli.traffic.service.policy.TrafficPolicyWriteThroughService;
 import com.pooli.traffic.service.runtime.TrafficInFlightDedupeService;
 import com.pooli.traffic.service.runtime.TrafficRedisKeyFactory;
@@ -48,7 +50,9 @@ class TrafficProfileBootTest {
             .withBean(TrafficInFlightDedupeService.class, () -> mock(TrafficInFlightDedupeService.class))
             .withBean(TrafficDeductDoneLogService.class, () -> mock(TrafficDeductDoneLogService.class))
             .withBean(TrafficRedisKeyFactory.class, () -> mock(TrafficRedisKeyFactory.class))
-            .withBean(TrafficRequestMetrics.class, () -> mock(TrafficRequestMetrics.class));
+            .withBean(TrafficRequestMetrics.class, () -> mock(TrafficRequestMetrics.class))
+            .withBean(TrafficPolicyVersionedRedisService.class, () -> mock(TrafficPolicyVersionedRedisService.class))
+            .withBean(RedisOutboxRecordService.class, () -> mock(RedisOutboxRecordService.class));
 
     @Nested
     @DisplayName("프로파일별 빈 활성화 검증")

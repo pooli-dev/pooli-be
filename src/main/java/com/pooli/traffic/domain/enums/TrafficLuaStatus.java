@@ -13,6 +13,7 @@ public enum TrafficLuaStatus {
     HIT_MONTHLY_SHARED_LIMIT,
     HIT_APP_DAILY_LIMIT,
     HIT_APP_SPEED,
+    GLOBAL_POLICY_HYDRATE,
     HYDRATE,
     ERROR
 }

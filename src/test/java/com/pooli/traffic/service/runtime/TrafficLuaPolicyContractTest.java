@@ -112,6 +112,32 @@ class TrafficLuaPolicyContractTest {
     }
 
     @Test
+    @DisplayName("전역 정책 키 누락 가드는 개인풀 정책 판정보다 먼저 수행된다")
+    void checksGlobalPolicyGuardBeforeIndividualPolicyChecks() throws IOException {
+        String script = Files.readString(INDIVIDUAL_SCRIPT, StandardCharsets.UTF_8);
+
+        assertAppearsInOrder(
+                script,
+                "if has_missing_global_policy_key(",
+                "return as_json(0, \"GLOBAL_POLICY_HYDRATE\")",
+                "local whitelist_bypass = false"
+        );
+    }
+
+    @Test
+    @DisplayName("전역 정책 키 누락 가드는 공유풀 정책 판정보다 먼저 수행된다")
+    void checksGlobalPolicyGuardBeforeSharedPolicyChecks() throws IOException {
+        String script = Files.readString(SHARED_SCRIPT, StandardCharsets.UTF_8);
+
+        assertAppearsInOrder(
+                script,
+                "if has_missing_global_policy_key(",
+                "return as_json(0, \"GLOBAL_POLICY_HYDRATE\")",
+                "local whitelist_bypass = false"
+        );
+    }
+
+    @Test
     void doesNotWriteDbEmptyFlagInDeductScripts() throws IOException {
         String individualScript = Files.readString(INDIVIDUAL_SCRIPT, StandardCharsets.UTF_8);
         String sharedScript = Files.readString(SHARED_SCRIPT, StandardCharsets.UTF_8);

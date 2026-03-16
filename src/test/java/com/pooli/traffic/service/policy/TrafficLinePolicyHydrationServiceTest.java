@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -140,10 +141,21 @@ class TrafficLinePolicyHydrationServiceTest {
             trafficLinePolicyHydrationService.ensureLoaded(11L);
 
             // then
-            verify(trafficPolicyWriteThroughService).syncLineLimit(11L, 50_000L, true, 90_000L, false);
-            verify(trafficPolicyWriteThroughService).syncImmediateBlockEnd(11L, LocalDateTime.of(2026, 3, 12, 10, 0));
-            verify(trafficPolicyWriteThroughService).syncRepeatBlock(11L, List.of());
-            verify(trafficPolicyWriteThroughService).syncAppPolicySnapshot(eq(11L), any());
+            verify(trafficPolicyWriteThroughService).syncLineLimitUntracked(
+                    eq(11L),
+                    eq(50_000L),
+                    eq(true),
+                    eq(90_000L),
+                    eq(false),
+                    anyLong()
+            );
+            verify(trafficPolicyWriteThroughService).syncImmediateBlockEndUntracked(
+                    eq(11L),
+                    eq(LocalDateTime.of(2026, 3, 12, 10, 0)),
+                    anyLong()
+            );
+            verify(trafficPolicyWriteThroughService).syncRepeatBlockUntracked(eq(11L), eq(List.of()), anyLong());
+            verify(trafficPolicyWriteThroughService).syncAppPolicySnapshotUntracked(eq(11L), any(), anyLong());
             verify(valueOperations).set(readyKey, "1", Duration.ofSeconds(60L));
             verify(trafficLuaScriptInfraService).executeLockRelease(eq(lockKey), anyString());
         }
@@ -197,10 +209,17 @@ class TrafficLinePolicyHydrationServiceTest {
             trafficLinePolicyHydrationService.ensureLoaded(11L);
 
             // then
-            verify(trafficPolicyWriteThroughService).syncLineLimit(11L, -1L, false, -1L, false);
-            verify(trafficPolicyWriteThroughService).syncImmediateBlockEnd(11L, null);
-            verify(trafficPolicyWriteThroughService).syncRepeatBlock(11L, List.of());
-            verify(trafficPolicyWriteThroughService).syncAppPolicySnapshot(11L, List.of());
+            verify(trafficPolicyWriteThroughService).syncLineLimitUntracked(
+                    eq(11L),
+                    eq(-1L),
+                    eq(false),
+                    eq(-1L),
+                    eq(false),
+                    anyLong()
+            );
+            verify(trafficPolicyWriteThroughService).syncImmediateBlockEndUntracked(eq(11L), isNull(), anyLong());
+            verify(trafficPolicyWriteThroughService).syncRepeatBlockUntracked(eq(11L), eq(List.of()), anyLong());
+            verify(trafficPolicyWriteThroughService).syncAppPolicySnapshotUntracked(eq(11L), eq(List.of()), anyLong());
             verify(valueOperations).set(readyKey, "1", Duration.ofSeconds(60L));
             verify(trafficLuaScriptInfraService, never()).executeLockRelease(anyString(), anyString());
         }

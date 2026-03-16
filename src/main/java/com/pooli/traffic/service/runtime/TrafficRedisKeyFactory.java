@@ -230,6 +230,17 @@ public class TrafficRedisKeyFactory {
     }
 
     /**
+     * 리필 요청 멱등키를 생성합니다.
+     */
+    public String refillIdempotencyKey(String uuid) {
+        String normalizedUuid = Objects.requireNonNull(uuid, "uuid must not be null").trim();
+        if (normalizedUuid.isEmpty()) {
+            throw new IllegalArgumentException("uuid must not be blank");
+        }
+        return namespaced("refill:idempotency:" + normalizedUuid);
+    }
+
+    /**
       * `namespaced` 처리 목적에 맞는 핵심 로직을 수행합니다.
      */
     private String namespaced(String keyBody) {

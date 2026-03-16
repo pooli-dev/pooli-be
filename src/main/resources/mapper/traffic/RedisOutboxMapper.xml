@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.pooli.traffic.mapper.RedisOutboxMapper">
+
+    <insert id="insert"
+            parameterType="com.pooli.traffic.domain.outbox.RedisOutboxRecord"
+            useGeneratedKeys="true"
+            keyProperty="id"
+            keyColumn="id">
+        INSERT INTO TRAFFIC_REDIS_OUTBOX (
+            event_type,
+            payload,
+            uuid,
+            status,
+            retry_count,
+            created_at,
+            status_updated_at
+        ) VALUES (
+            #{eventType},
+            #{payload},
+            #{uuid},
+            #{status},
+            #{retryCount},
+            NOW(6),
+            NOW(6)
+        )
+    </insert>
+
+    <select id="selectRetryCandidatesForUpdate"
+            resultType="com.pooli.traffic.domain.outbox.RedisOutboxRecord">
+        SELECT
+            id,
+            event_type,
+            payload,
+            uuid,
+            status,
+            retry_count,
+            created_at,
+            status_updated_at
+        FROM TRAFFIC_REDIS_OUTBOX
+        WHERE (
+            status = 'FAIL'
+            OR (
+                status = 'PENDING'
+                AND created_at &lt; DATE_SUB(NOW(6), INTERVAL #{pendingDelaySeconds} SECOND)
+            )
+            OR (
+                status = 'PROCESSING'
+                AND status_updated_at &lt; DATE_SUB(NOW(6), INTERVAL #{processingStuckSeconds} SECOND)
+            )
+        )
+        ORDER BY id ASC
+        LIMIT #{limit}
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <update id="markProcessing">
+        UPDATE TRAFFIC_REDIS_OUTBOX
+        SET status = 'PROCESSING',
+            status_updated_at = NOW(6)
+        WHERE id = #{id}
+          AND status &lt;&gt; 'REVERT'
+    </update>
+
+    <update id="markSuccess">
+        UPDATE TRAFFIC_REDIS_OUTBOX
+        SET status = 'SUCCESS',
+            status_updated_at = NOW(6)
+        WHERE id = #{id}
+          AND status &lt;&gt; 'REVERT'
+    </update>
+
+    <update id="markFail">
+        UPDATE TRAFFIC_REDIS_OUTBOX
+        SET status = 'FAIL',
+            status_updated_at = NOW(6)
+        WHERE id = #{id}
+          AND status &lt;&gt; 'REVERT'
+    </update>
+
+    <update id="markFailWithRetryIncrement">
+        UPDATE TRAFFIC_REDIS_OUTBOX
+        SET status = 'FAIL',
+            retry_count = retry_count + 1,
+            status_updated_at = NOW(6)
+        WHERE id = #{id}
+          AND status &lt;&gt; 'REVERT'
+    </update>
+
+    <update id="markFailWithRetryCount">
+        UPDATE TRAFFIC_REDIS_OUTBOX
+        SET status = 'FAIL',
+            retry_count = #{retryCount},
+            status_updated_at = NOW(6)
+        WHERE id = #{id}
+          AND status &lt;&gt; 'REVERT'
+    </update>
+
+    <update id="markRevertIfCompensable">
+        UPDATE TRAFFIC_REDIS_OUTBOX
+        SET status = 'REVERT',
+            status_updated_at = NOW(6)
+        WHERE id = #{id}
+          AND event_type = 'REFILL'
+          AND status IN ('FAIL', 'PENDING', 'PROCESSING')
+    </update>
+
+</mapper>

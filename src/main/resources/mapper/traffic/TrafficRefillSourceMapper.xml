@@ -38,6 +38,14 @@
           AND remaining_data >= #{deductAmount}
     </update>
 
+    <update id="restoreIndividualRemaining">
+        UPDATE LINE
+        SET remaining_data = remaining_data + #{restoreAmount},
+            updated_at = NOW()
+        WHERE line_id = #{lineId}
+          AND deleted_at IS NULL
+    </update>
+
     <select id="selectSharedRemaining" resultType="java.lang.Long">
         SELECT pool_remaining_data
         FROM FAMILY
@@ -60,6 +68,14 @@
         WHERE family_id = #{familyId}
           AND deleted_at IS NULL
           AND pool_remaining_data >= #{deductAmount}
+    </update>
+
+    <update id="restoreSharedRemaining">
+        UPDATE FAMILY
+        SET pool_remaining_data = pool_remaining_data + #{restoreAmount},
+            updated_at = NOW()
+        WHERE family_id = #{familyId}
+          AND deleted_at IS NULL
     </update>
 
 </mapper>

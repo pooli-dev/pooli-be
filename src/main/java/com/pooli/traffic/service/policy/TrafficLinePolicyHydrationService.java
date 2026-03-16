@@ -114,16 +114,18 @@ public class TrafficLinePolicyHydrationService {
         List<RepeatBlockPolicyResDto> repeatBlocks = repeatBlockMapper.selectRepeatBlocksByLineId(lineId);
         List<AppPolicy> appPolicies = appPolicyMapper.findAllEntityByLineId(lineId);
 
-        trafficPolicyWriteThroughService.syncLineLimit(
+        long version = System.currentTimeMillis();
+        trafficPolicyWriteThroughService.syncLineLimitUntracked(
                 lineId,
                 dailyLimit,
                 isDailyActive,
                 sharedLimit,
-                isSharedActive
+                isSharedActive,
+                version
         );
-        trafficPolicyWriteThroughService.syncImmediateBlockEnd(lineId, blockEndAt);
-        trafficPolicyWriteThroughService.syncRepeatBlock(lineId, repeatBlocks);
-        trafficPolicyWriteThroughService.syncAppPolicySnapshot(lineId, appPolicies);
+        trafficPolicyWriteThroughService.syncImmediateBlockEndUntracked(lineId, blockEndAt, version);
+        trafficPolicyWriteThroughService.syncRepeatBlockUntracked(lineId, repeatBlocks, version);
+        trafficPolicyWriteThroughService.syncAppPolicySnapshotUntracked(lineId, appPolicies, version);
 
         long readyTtlSeconds = Math.max(1L, linePolicyReadyTtlSeconds);
         cacheStringRedisTemplate.opsForValue().set(readyKey, "1", Duration.ofSeconds(readyTtlSeconds));

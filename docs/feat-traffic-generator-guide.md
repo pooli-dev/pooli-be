@@ -143,6 +143,9 @@ API 서버:
 - 모든 차감 Lua는 JSON 문자열(`{"answer": <number>, "status": "<CODE>"}`)을 반환한다.
 - answer: 현재 tick 실제 차감량(Byte)
 - status:
+- 상태 코드 규칙:
+  - 정책에 의한 제한/차단(`BLOCKED_*`, `HIT_*`)이 발생하면 `status`는 반드시 해당 정책 상태여야 하며 `OK`를 반환하면 안 된다.
+  - `last_lua_status`는 차감 Lua가 반환한 `status`를 그대로 저장한다.
 
 | **코드** | **의미** | **설명** |
 | --- | --- | --- |
@@ -228,7 +231,7 @@ API 서버:
 11. `answer`만큼 개인풀 잔량 차감
 12. `answer`만큼 `daily_total_usage` 증가
 13. `answer`만큼 `daily_app_usage` 증가
-14. `{"answer":answer,"status":"OK"}` 반환
+14. 정책에 의한 제한/차단이 한 번도 발생하지 않았을 때만 `{"answer":answer,"status":"OK"}` 반환
 
 ### **11.5 공유 데이터 차감 가능량 계산 및 차감량 반환 (상세)**
 
@@ -259,7 +262,7 @@ API 서버:
 13. `answer`만큼 `daily_total_usage` 증가
 14. `answer`만큼 `monthly_shared_usage` 증가
 15. `answer`만큼 `daily_app_usage` 증가
-16. `{"answer":answer,"status":"OK"}` 반환
+16. 정책에 의한 제한/차단이 한 번도 발생하지 않았을 때만 `{"answer":answer,"status":"OK"}` 반환
 
 ### **12) 데이터 리필량 계산 (확정 규칙)**
 

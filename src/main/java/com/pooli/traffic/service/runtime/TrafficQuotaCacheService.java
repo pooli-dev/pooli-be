@@ -1,12 +1,19 @@
 package com.pooli.traffic.service.runtime;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -20,8 +27,16 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class TrafficQuotaCacheService {
 
+    private static final String REFILL_APPLY_WITH_IDEMPOTENCY_SCRIPT_RESOURCE = "lua/traffic/refill_apply_with_idempotency.lua";
+
     @Qualifier("cacheStringRedisTemplate")
     private final StringRedisTemplate cacheStringRedisTemplate;
+    private RedisScript<Long> refillApplyWithIdempotencyScript;
+
+    @PostConstruct
+    public void initializeScripts() {
+        refillApplyWithIdempotencyScript = buildLongScript(loadScriptText(REFILL_APPLY_WITH_IDEMPOTENCY_SCRIPT_RESOURCE));
+    }
 
     /**
      * 외부 저장소에서 현재 데이터를 조회해 반환합니다.
@@ -56,8 +71,8 @@ public class TrafficQuotaCacheService {
     /**
       * `hydrateBalance` 처리 목적에 맞는 핵심 로직을 수행합니다.
      */
-    public void hydrateBalance(String balanceKey, long initialAmount, long expireAtEpochSeconds) {
-        long normalizedAmount = Math.max(0L, initialAmount);
+    public void hydrateBalance(String balanceKey, long expireAtEpochSeconds) {
+        long normalizedAmount = 0L;
 
         // HYDRATE 단계는 키가 없던 상태를 복구하는 목적이므로 putIfAbsent를 사용한다.
         cacheStringRedisTemplate.opsForHash().putIfAbsent(balanceKey, "amount", String.valueOf(normalizedAmount));
@@ -93,5 +108,66 @@ public class TrafficQuotaCacheService {
 
         // 리필 시점에도 동일 TTL 정책을 유지한다.
         cacheStringRedisTemplate.expireAt(balanceKey, Instant.ofEpochSecond(expireAtEpochSeconds));
+    }
+
+    /**
+     * amount 증가, is_empty 플래그 갱신, 멱등키 등록을 단일 Lua로 원자 처리합니다.
+     *
+     * <p>is_empty는 Java에서 별도로 HSET하면 락 상실 보상 흐름 등에서 부정합이 발생할 수 있으므로
+     * 반드시 이 메서드를 통해 amount 증가와 함께 원자적으로 기록해야 합니다.
+     *
+     * @param isDbEmpty DB 원천 잔량이 0 이하인지 여부 (Lua 내부에서 is_empty 필드에 기록됨)
+     * @return true면 이번 호출에서 amount가 실제 증가됨, false면 이미 처리된 uuid
+     */
+    public boolean applyRefillWithIdempotency(
+            String balanceKey,
+            String idempotencyKey,
+            String refillUuid,
+            long refillAmount,
+            long expireAtEpochSeconds,
+            long idempotencyTtlSeconds,
+            boolean isDbEmpty
+    ) {
+        long normalizedRefillAmount = Math.max(0L, refillAmount);
+        if (normalizedRefillAmount <= 0) {
+            return false;
+        }
+
+        Long rawResult = cacheStringRedisTemplate.execute(
+                requireScript(refillApplyWithIdempotencyScript, "refillApplyWithIdempotencyScript"),
+                List.of(balanceKey, idempotencyKey),
+                String.valueOf(normalizedRefillAmount),
+                String.valueOf(expireAtEpochSeconds),
+                refillUuid == null ? "1" : refillUuid,
+                String.valueOf(Math.max(1L, idempotencyTtlSeconds)),
+                // is_empty 플래그: DB 잔량 소진 여부를 Lua 내부에서 amount와 함께 원자적으로 기록한다.
+                isDbEmpty ? "1" : "0"
+        );
+
+        return rawResult != null && rawResult == 1L;
+    }
+
+
+    private String loadScriptText(String resourcePath) {
+        ClassPathResource resource = new ClassPathResource(resourcePath);
+        try {
+            return new String(resource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to load Lua script text. resource=" + resourcePath, e);
+        }
+    }
+
+    private RedisScript<Long> requireScript(RedisScript<Long> script, String scriptName) {
+        if (script == null) {
+            throw new IllegalStateException("Lua script is not initialized. script=" + scriptName);
+        }
+        return script;
+    }
+
+    private static RedisScript<Long> buildLongScript(String scriptText) {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptText(scriptText);
+        script.setResultType(Long.class);
+        return script;
     }
 }

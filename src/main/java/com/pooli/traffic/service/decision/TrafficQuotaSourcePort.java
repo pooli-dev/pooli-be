@@ -14,19 +14,6 @@ import com.pooli.traffic.domain.enums.TrafficPoolType;
 public interface TrafficQuotaSourcePort {
 
     /**
-     * HYDRATE 단계에서 Redis 잔량 키를 복구할 때 사용할 "초기 잔량"을 조회합니다.
-     *
-     * <p>호출 시점:
-     * Lua 차감 전에 Redis에 잔량 키가 없거나 만료되어, DB 등 원천 저장소에서 값을 다시 채워야 할 때 사용합니다.
-     *
-     * @param poolType 대상 풀 유형(INDIVIDUAL/SHARED)
-     * @param payload  요청 컨텍스트(lineId/familyId/traceId 등)
-     * @param targetMonth 조회 기준 월(월별 잔량 정책과 키 정합성 유지 용도)
-     * @return 초기 잔량(Byte, 0 이상 권장)
-     */
-    long loadInitialAmount(TrafficPoolType poolType, TrafficPayloadReqDto payload, YearMonth targetMonth);
-
-    /**
      * 개인풀 잔량 해시에 저장할 QoS 값을 조회합니다.
      *
      * <p>반환값은 Redis에 바로 저장 가능한 최종 값(배율 적용 포함)이어야 합니다.
@@ -101,10 +88,20 @@ public interface TrafficQuotaSourcePort {
      * @param requestedRefillAmount 요청 리필량(Byte)
      * @return DB 차감 전/후 잔량과 실제 차감량을 담은 결과 객체
      */
-    TrafficDbRefillClaimResult claimRefillAmountFromDb(
+    default TrafficDbRefillClaimResult claimRefillAmountFromDb(
             TrafficPoolType poolType,
             TrafficPayloadReqDto payload,
             YearMonth targetMonth,
             long requestedRefillAmount
+    ) {
+        return claimRefillAmountFromDb(poolType, payload, targetMonth, requestedRefillAmount, null);
+    }
+
+    TrafficDbRefillClaimResult claimRefillAmountFromDb(
+            TrafficPoolType poolType,
+            TrafficPayloadReqDto payload,
+            YearMonth targetMonth,
+            long requestedRefillAmount,
+            String refillUuid
     );
 }

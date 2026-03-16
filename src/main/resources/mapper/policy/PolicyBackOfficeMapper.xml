@@ -25,7 +25,6 @@
             created_at AS createdAt,
             updated_at AS updatedAt
         FROM POLICY
-        WHERE deleted_at IS NULL
         ORDER BY policy_id ASC
     </select>
 	    

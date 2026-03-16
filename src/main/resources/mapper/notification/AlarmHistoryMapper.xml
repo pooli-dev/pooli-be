@@ -48,6 +48,67 @@
         </foreach>
     </insert>
 
+    <!-- ALL 대상 알림 -->
+    <insert id="insertNotificationAll">
+        INSERT INTO ALARM_HISTORY (
+        line_id,
+        alarm_code,
+        value,
+        created_at,
+        deleted_at,
+        read_at
+        )
+        SELECT
+        line_id,
+        #{alarmCode},
+        #{value},
+        NOW(6),
+        NULL,
+        NULL
+        FROM LINE
+    </insert>
+
+    <!-- OWNER 대상 알림 -->
+    <insert id="insertNotificationOwner">
+        INSERT INTO ALARM_HISTORY (
+        line_id,
+        alarm_code,
+        value,
+        created_at,
+        deleted_at,
+        read_at
+        )
+        SELECT
+        fl.line_id,
+        #{alarmCode},
+        #{value},
+        NOW(6),
+        NULL,
+        NULL
+        FROM family_line fl
+        WHERE fl.role = 'OWNER'
+    </insert>
+
+    <!-- MEMBER 대상 알림 -->
+    <insert id="insertNotificationMember">
+        INSERT INTO ALARM_HISTORY (
+        line_id,
+        alarm_code,
+        value,
+        created_at,
+        deleted_at,
+        read_at
+        )
+        SELECT
+        fl.line_id,
+        #{alarmCode},
+        #{value},
+        NOW(6),
+        NULL,
+        NULL
+        FROM family_line fl
+        WHERE fl.role = 'MEMBER'
+    </insert>
 
     <select id="countAlarmHistory" resultType="long">
 

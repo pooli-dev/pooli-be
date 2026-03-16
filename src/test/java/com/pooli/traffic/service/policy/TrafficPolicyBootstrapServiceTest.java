@@ -136,6 +136,51 @@ class TrafficPolicyBootstrapServiceTest {
         }
     }
 
+    @Nested
+    @DisplayName("hydrateOnDemand 테스트")
+    class HydrateOnDemandTest {
+
+        @Test
+        @DisplayName("필수 POLICY ID 일부 누락이어도 fail-fast 예외 없이 종료")
+        void doesNotThrowWhenRequiredPolicyIdsMissing() {
+            // given
+            when(policyBackOfficeMapper.selectPolicyActivationSnapshot()).thenReturn(missingWhitelistPolicySnapshots());
+
+            // when & then
+            assertDoesNotThrow(() -> trafficPolicyBootstrapService.hydrateOnDemand());
+        }
+
+        @Test
+        @DisplayName("락 획득 시 기존 bootstrap과 동일하게 pipeline 반영 후 lock 해제")
+        void pipelinesAndReleasesLockWhenAcquired() {
+            // given
+            String lockKey = "pooli:policy:bootstrap:lock";
+            when(policyBackOfficeMapper.selectPolicyActivationSnapshot()).thenReturn(allPolicySnapshots());
+            when(trafficRedisKeyFactory.policyBootstrapLockKey()).thenReturn(lockKey);
+            when(trafficRedisKeyFactory.policyBootstrapVersionKey()).thenReturn("pooli:policy_bootstrap_version");
+            when(cacheStringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+            when(valueOperations.setIfAbsent(
+                    eq(lockKey),
+                    anyString(),
+                    eq(Duration.ofMillis(30_000L))
+            )).thenReturn(true);
+            when(trafficRedisRuntimePolicy.zoneId()).thenReturn(ZoneId.of("Asia/Seoul"));
+            when(cacheStringRedisTemplate.executePipelined(any(org.springframework.data.redis.core.SessionCallback.class)))
+                    .thenReturn(List.of());
+            when(cacheStringRedisTemplate.execute(any(RedisScript.class), eq(List.of(lockKey)), anyString()))
+                    .thenReturn(1L);
+
+            // when
+            trafficPolicyBootstrapService.hydrateOnDemand();
+
+            // then
+            verify(cacheStringRedisTemplate, times(1))
+                    .executePipelined(any(org.springframework.data.redis.core.SessionCallback.class));
+            verify(cacheStringRedisTemplate, times(1))
+                    .execute(any(RedisScript.class), eq(List.of(lockKey)), anyString());
+        }
+    }
+
     private List<PolicyActivationSnapshotResDto> allPolicySnapshots() {
         LocalDateTime now = LocalDateTime.of(2026, 3, 11, 22, 0, 0);
         return List.of(

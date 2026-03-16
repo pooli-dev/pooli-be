@@ -15,7 +15,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class AlarmHistory {
 
-	Long alarm_historyId;
+	Long alarmHistoryId;
 	Long lineId;
 	AlarmCode alarmCode;
 	String value;

@@ -70,7 +70,8 @@
     <update id="deletePolicy">
         UPDATE POLICY
         SET
-            deleted_at = NOW()
+            deleted_at = NOW(),
+            is_active = false
         WHERE policy_id = #{policyId}
           AND deleted_at IS NULL
     </update>

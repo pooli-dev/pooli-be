@@ -1,8 +1,10 @@
 package com.pooli.traffic.service.decision;
 
 import java.time.YearMonth;
+import java.util.UUID;
 
 import com.pooli.traffic.service.runtime.TrafficRecentUsageBucketService;
+import com.pooli.traffic.service.outbox.RedisOutboxRecordService;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +13,8 @@ import com.pooli.traffic.domain.TrafficDbRefillClaimResult;
 import com.pooli.traffic.domain.TrafficRefillPlan;
 import com.pooli.traffic.domain.dto.request.TrafficPayloadReqDto;
 import com.pooli.traffic.domain.enums.TrafficPoolType;
+import com.pooli.traffic.domain.outbox.OutboxEventType;
+import com.pooli.traffic.domain.outbox.payload.RefillOutboxPayload;
 import com.pooli.traffic.mapper.TrafficRefillSourceMapper;
 
 import lombok.RequiredArgsConstructor;
@@ -28,25 +32,7 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
 
     private final TrafficRefillSourceMapper trafficRefillSourceMapper;
     private final TrafficRecentUsageBucketService trafficRecentUsageBucketService;
-
-    /**
-     * HYDRATE 단계에서 Redis 잔량 키를 복구할 때 사용할 "초기 잔량"을 DB에서 조회합니다.
-     *
-     * <p>동작 원칙:
-     * 1) poolType(개인/공유)에 따라 조회 대상 테이블이 달라집니다.
-     * 2) payload 식별자(lineId/familyId)가 없으면 0으로 보정됩니다.
-     * 3) 음수/NULL 값은 비정상 데이터로 간주하고 0으로 정규화합니다.
-     *
-     * @param poolType    조회할 풀 유형(INDIVIDUAL, SHARED)
-     * @param payload     요청 컨텍스트(traceId/lineId/familyId 포함)
-     * @param targetMonth 월 기준 파라미터(현재 구현에서는 payload 식별자 기반 조회에 사용)
-     * @return Redis hydrate에 사용할 초기 잔량(Byte, 0 이상)
-     */
-    @Override
-    public long loadInitialAmount(TrafficPoolType poolType, TrafficPayloadReqDto payload, YearMonth targetMonth) {
-        // hydrate 시점의 원천 잔량을 DB에서 읽어 Redis 초기값으로 사용한다.
-        return readRemainingAmount(poolType, payload);
-    }
+    private final RedisOutboxRecordService redisOutboxRecordService;
 
     /**
      * 개인풀 잔량 해시에 저장할 QoS 값을 조회합니다.
@@ -97,28 +83,53 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
      * @return DB 차감 전/후와 실제 차감량을 담은 결과 객체
      */
     @Override
-    @Transactional
     public TrafficDbRefillClaimResult claimRefillAmountFromDb(
             TrafficPoolType poolType,
             TrafficPayloadReqDto payload,
             YearMonth targetMonth,
             long requestedRefillAmount
     ) {
+        return claimRefillAmountFromDb(poolType, payload, targetMonth, requestedRefillAmount, null);
+    }
+
+    @Override
+    @Transactional
+    public TrafficDbRefillClaimResult claimRefillAmountFromDb(
+            TrafficPoolType poolType,
+            TrafficPayloadReqDto payload,
+            YearMonth targetMonth,
+            long requestedRefillAmount,
+            String refillUuid
+    ) {
         long normalizedRequestedAmount = Math.max(0L, requestedRefillAmount);
         long dbRemainingBefore = normalizePositive(readRemainingAmountForUpdate(poolType, payload));
         if (normalizedRequestedAmount <= 0 || dbRemainingBefore <= 0) {
-            return buildClaimResult(normalizedRequestedAmount, dbRemainingBefore, 0L, dbRemainingBefore);
+            return buildClaimResult(normalizedRequestedAmount, dbRemainingBefore, 0L, dbRemainingBefore, null, null);
         }
 
         long actualRefillAmount = Math.min(normalizedRequestedAmount, dbRemainingBefore);
         int updatedRows = deductRemainingAmount(poolType, payload, actualRefillAmount);
         if (updatedRows <= 0) {
             long reloadedRemaining = readRemainingAmount(poolType, payload);
-            return buildClaimResult(normalizedRequestedAmount, dbRemainingBefore, 0L, reloadedRemaining);
+            return buildClaimResult(normalizedRequestedAmount, dbRemainingBefore, 0L, reloadedRemaining, null, null);
         }
 
+        long outboxRecordId = createRefillOutboxRecord(
+                poolType,
+                payload,
+                targetMonth,
+                actualRefillAmount,
+                refillUuid
+        );
         long dbRemainingAfter = Math.max(0L, dbRemainingBefore - actualRefillAmount);
-        return buildClaimResult(normalizedRequestedAmount, dbRemainingBefore, actualRefillAmount, dbRemainingAfter);
+        return buildClaimResult(
+                normalizedRequestedAmount,
+                dbRemainingBefore,
+                actualRefillAmount,
+                dbRemainingAfter,
+                refillUuid,
+                outboxRecordId
+        );
     }
 
     /**
@@ -134,14 +145,54 @@ public class TrafficDefaultQuotaSourceAdapter implements TrafficQuotaSourcePort 
             long requestedRefillAmount,
             long dbRemainingBefore,
             long actualRefillAmount,
-            long dbRemainingAfter
+            long dbRemainingAfter,
+            String refillUuid,
+            Long outboxRecordId
     ) {
         return TrafficDbRefillClaimResult.builder()
                 .requestedRefillAmount(requestedRefillAmount)
                 .dbRemainingBefore(dbRemainingBefore)
                 .actualRefillAmount(actualRefillAmount)
                 .dbRemainingAfter(dbRemainingAfter)
+                .refillUuid(refillUuid)
+                .outboxRecordId(outboxRecordId)
                 .build();
+    }
+
+    /**
+     * DB 차감 성공 직후 Outbox PENDING 레코드를 같은 트랜잭션에서 생성합니다.
+     */
+    private long createRefillOutboxRecord(
+            TrafficPoolType poolType,
+            TrafficPayloadReqDto payload,
+            YearMonth targetMonth,
+            long actualRefillAmount,
+            String refillUuid
+    ) {
+        String normalizedRefillUuid = normalizeRefillUuid(refillUuid);
+        RefillOutboxPayload refillOutboxPayload = RefillOutboxPayload.builder()
+                .uuid(normalizedRefillUuid)
+                .poolType(poolType.name())
+                .lineId(payload == null ? null : payload.getLineId())
+                .familyId(payload == null ? null : payload.getFamilyId())
+                .targetMonth(targetMonth == null ? null : targetMonth.toString())
+                .actualRefillAmount(actualRefillAmount)
+                .traceId(payload == null ? null : payload.getTraceId())
+                .claimedAtEpochMillis(System.currentTimeMillis())
+                .build();
+
+        return redisOutboxRecordService.createPending(OutboxEventType.REFILL, refillOutboxPayload, normalizedRefillUuid);
+    }
+
+    /**
+     * 리필 멱등 UUID를 검증하고 정규화합니다.
+     */
+    private String normalizeRefillUuid(String refillUuid) {
+        if (refillUuid == null || refillUuid.isBlank()) {
+            // 호출자가 UUID를 전달하지 않은 경우(테스트/레거시 경로)는 안전한 랜덤 UUID를 사용한다.
+            return UUID.randomUUID().toString();
+        }
+        return refillUuid.trim();
     }
 
     /**

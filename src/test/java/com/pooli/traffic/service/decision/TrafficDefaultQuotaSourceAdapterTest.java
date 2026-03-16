@@ -19,6 +19,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import com.pooli.traffic.service.outbox.RedisOutboxRecordService;
 import com.pooli.traffic.service.runtime.TrafficRecentUsageBucketService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -42,6 +43,9 @@ class TrafficDefaultQuotaSourceAdapterTest {
 
     @Mock
     private TrafficRecentUsageBucketService trafficRecentUsageBucketService;
+
+    @Mock
+    private RedisOutboxRecordService redisOutboxRecordService;
 
     @InjectMocks
     private TrafficDefaultQuotaSourceAdapter trafficDefaultQuotaSourceAdapter;
@@ -82,6 +86,7 @@ class TrafficDefaultQuotaSourceAdapterTest {
             TrafficPayloadReqDto payload = payload();
             when(trafficRefillSourceMapper.selectIndividualRemainingForUpdate(11L)).thenReturn(40L);
             when(trafficRefillSourceMapper.deductIndividualRemaining(11L, 40L)).thenReturn(1);
+            when(redisOutboxRecordService.createPending(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(1L);
 
             // when
             TrafficDbRefillClaimResult result = trafficDefaultQuotaSourceAdapter.claimRefillAmountFromDb(
@@ -132,6 +137,8 @@ class TrafficDefaultQuotaSourceAdapterTest {
             // given
             TrafficPayloadReqDto payload = payload();
             AtomicLong remaining = new AtomicLong(100L);
+            Mockito.lenient().when(redisOutboxRecordService.createPending(Mockito.any(), Mockito.any(), Mockito.any()))
+                    .thenReturn(1L);
 
             when(trafficRefillSourceMapper.selectIndividualRemainingForUpdate(11L))
                     .thenAnswer(invocation -> remaining.get());
