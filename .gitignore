@@ -46,3 +46,6 @@ AGENTS.md
 ### 테스트 데이터 csv 및 sql 파일 ###
 scripts/test-data/output
 scripts/test-data/__pycache__
+loadtest/results/*.json
+loadtest/results/*.html
+loadtest/k6/data/*.local.json

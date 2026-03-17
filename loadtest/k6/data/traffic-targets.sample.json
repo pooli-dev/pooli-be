@@ -1,0 +1,90 @@
+{
+  "normal": [
+    {
+      "name": "warm-line-1",
+      "lineId": 1,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [1024, 32768, 262144],
+      "weight": 4
+    },
+    {
+      "name": "warm-line-2",
+      "lineId": 2,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [1024, 65536, 262144],
+      "weight": 4
+    },
+    {
+      "name": "warm-line-3",
+      "lineId": 3,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [1024, 32768, 131072],
+      "weight": 3
+    },
+    {
+      "name": "warm-line-4",
+      "lineId": 4,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [1024, 32768, 131072],
+      "weight": 3
+    }
+  ],
+  "hot": [
+    {
+      "name": "hot-line-1",
+      "lineId": 1,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [65536, 262144, 1048576],
+      "weight": 8
+    },
+    {
+      "name": "hot-line-2",
+      "lineId": 2,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [65536, 262144, 1048576],
+      "weight": 2
+    }
+  ],
+  "refill": [
+    {
+      "name": "refill-line-3",
+      "lineId": 3,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [262144, 524288, 1048576],
+      "weight": 5
+    },
+    {
+      "name": "refill-line-4",
+      "lineId": 4,
+      "familyId": 1,
+      "appId": 1,
+      "payloadBytes": [262144, 524288, 1048576],
+      "weight": 5
+    }
+  ],
+  "policyHit": [
+    {
+      "name": "policy-non-whitelist-line-1",
+      "lineId": 1,
+      "familyId": 1,
+      "appId": 2,
+      "payloadBytes": [1024, 8192, 32768],
+      "weight": 5
+    },
+    {
+      "name": "policy-non-whitelist-line-2",
+      "lineId": 2,
+      "familyId": 1,
+      "appId": 2,
+      "payloadBytes": [1024, 8192, 32768],
+      "weight": 5
+    }
+  ]
+}
